@@ -1,7 +1,7 @@
-from classes.UserDates import UserDates
-from classes.UserLeveling import UserLeveling
-from classes.UserSkills import UserSkills
-from classes.UserRankings import UserRankings
+from src.classes.UserDates import UserDates
+from src.classes.UserLeveling import UserLeveling
+from src.classes.UserSkills import UserSkills
+from src.classes.UserRankings import UserRankings
 from typing import Literal
 
 class User:

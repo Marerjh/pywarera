@@ -1,5 +1,5 @@
-from classes.UserSkill import UserSkill
-from classes.UserSkillBar import UserSkillBar
+from src.classes.UserSkill import UserSkill
+from src.classes.UserSkillBar import UserSkillBar
 
 class UserSkills:
     def __init__(self, data):

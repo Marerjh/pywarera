@@ -1,27 +1,16 @@
-import wareraapi
-from classes.User import User
-from classes.Country import Country
-from classes.Company import Company
-from classes.Government import Government
-import time
+import src.wareraapi as wareraapi
+from src.classes.User import User
+from src.classes.Country import Country
+from src.classes.Company import Company
+from src.classes.Government import Government
 from typing import Literal
+import src.managers.users_manager as users_manager
 
 countries = dict()
 
 
 def clear_cache():
     wareraapi.s.cache.clear()
-
-
-def get_user(user_id: str) -> User:
-    return User(wareraapi.user_get_user_lite(user_id))
-
-
-def get_users(users_ids: list[str]) -> list[User]:
-    for user_id in users_ids:
-        wareraapi.user_get_user_lite(user_id, do_batch=True)
-    respond = wareraapi.send_batch()
-    return [User(user_data["result"]["data"]) for user_data in respond]
 
 
 def get_government(country_id: str) -> Government:
@@ -58,14 +47,14 @@ def get_all_country_citizens_id(country_id: str) -> list[str]:
 
 def get_all_country_citizens(country_id: str) -> list[User]:
     ids = get_all_country_citizens_id(country_id)
-    return get_users(ids)
+    return users_manager.get_users(ids)
 
-def get_country_citizens_ids_by_name(country_name: str):
+def get_country_citizens_ids_by_name(country_name: str) -> list[str]:
     return get_all_country_citizens_id(get_country_id_by_name(country_name))
 
-def get_country_citizens_by_name(country_name: str):
+def get_country_citizens_by_name(country_name: str) -> list[User]:
     ids = get_country_citizens_ids_by_name(country_name)
-    return get_users(ids)
+    return users_manager.get_users(ids)
 
 
 def get_companies_ids_of_player(user_id: str) -> list[str]:

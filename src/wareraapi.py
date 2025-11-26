@@ -17,7 +17,7 @@ DELAY_SECONDS = 1
 BATCH_DELAY = 5
 BATCH_LIMIT = 100
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename="Log.log", level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 batched_endpoints = []
@@ -33,7 +33,7 @@ def send_request(endpoint, data=None, ttl=0) -> dict | list:
     params = {"input": json.dumps(data)} if data else None
     logger.info(f"Creating request: {url} with params {params}")
     cached_response = s.cache.get_response(s.cache.create_key(requests.Request(method="GET", url=url, params=params, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36", "Accept": "application/json"}).prepare()), False)
-    if cached_response:
+    if cached_response and cached_response.status_code in range(200, 299+1):
         logger.info(f"Found request in cache, no request created")
         return cached_response.json()
     time.sleep(DELAY_SECONDS)
@@ -56,7 +56,7 @@ def send_request(endpoint, data=None, ttl=0) -> dict | list:
         logger.error("Bad JSON in response")
         raise WarEraApiException("Bad JSON in response") from e
 
-    if 200 <= r.status_code <= 299:
+    if r.status_code in range(200, 299+1):
         logger.info("Success!")
         return return_data
     logger.error(f"{r.status_code}: {r.reason}")
@@ -65,7 +65,7 @@ def send_request(endpoint, data=None, ttl=0) -> dict | list:
 
 def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int):
     logger.info(f"Saving cache for endpoint {endpoint}, params {params}, ttl {ttl}")
-    fake_req = requests.PreparedRequest()
+    fake_req = PreparedRequest()
     fake_req.prepare(method="GET",
         url=f"https://api2.warera.io/trpc{endpoint}",
         headers={
@@ -97,6 +97,7 @@ def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int):
 
 
 def send_batch(ttl=600):
+    logger.info("Preparing batch request")
     batch_limit = BATCH_LIMIT or 9999
     cycle, max_cycle = 0, math.ceil(len(batched_endpoints) / batch_limit)
     responses = []

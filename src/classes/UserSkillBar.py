@@ -1,4 +1,4 @@
-from classes.UserSkill import UserSkill
+from src.classes.UserSkill import UserSkill
 
 class UserSkillBar(UserSkill):
     def __init__(self, data):

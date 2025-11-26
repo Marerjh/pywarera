@@ -1,4 +1,4 @@
-from classes.CountryRanking import CountryRanking
+from src.classes.CountryRanking import CountryRanking
 
 class CountryRankings:
     def __init__(self, data):
