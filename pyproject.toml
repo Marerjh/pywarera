@@ -1,0 +1,26 @@
+[project]
+name = "pywarera"
+version = "0.1.0"
+authors = [
+  { name="Marerjh" },
+]
+description = "WarEra browser game API wrapper"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+]
+license = "MIT"
+license-files = ["LICENSE"]
+
+dependencies = [
+    "requests==2.32.5",
+    "requests-cache==1.2.1"
+]
+
+[project.urls]
+Homepage = "https://github.com/pypa/sampleproject"
+Issues = "https://github.com/pypa/sampleproject/issues"
