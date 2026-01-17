@@ -1,6 +1,6 @@
 [project]
 name = "pywarera"
-version = "0.1.1"
+version = "0.1.0"
 authors = [
   { name="Marerjh" },
 ]
@@ -22,5 +22,5 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/pypa/sampleproject"
-Issues = "https://github.com/pypa/sampleproject/issues"
+Homepage = "https://github.com/Marerjh/pywarera"
+Issues = "https://github.com/Marerjh/pywarera/issues"

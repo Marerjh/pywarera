@@ -1,9 +1,11 @@
-License: GNU General Public License v3.0
+**This package is EXPERIMENTAL, NOT stable and  NOT intended for use in anything other than your own private projects.**
 
 **pywarera** is a Python wrapper for the WarEra API. 
 It provides high-level classes for working with game models and a low-level `wareraapi` module for making raw API requests.
 
 API documentation is available at https://api2.warera.io/docs/.
+
+License: GNU General Public License v3.0
 
 ## Features
 - high-level classes for working with API models
