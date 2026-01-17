@@ -1,5 +1,3 @@
-import time
-import json
 from pathlib import Path
 from diskcache import Cache
 from src.classes.User import User
@@ -27,6 +25,7 @@ def cache_username(user_id, username):
     cache.add(user_id, username, expire=86400)
 
 def get_username_by_id(user_id: str) -> str:
+    """Retrieves username from cache if available, else sends requests and caches data"""
     return cache.get(user_id) if user_id in cache else get_user(user_id).username
 
 print(get_username_by_id("686171897e2427d535e30814"))

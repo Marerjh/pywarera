@@ -63,7 +63,7 @@ def send_request(endpoint, data=None, ttl=0) -> dict | list:
     raise WarEraApiException(f"{r.status_code}: {r.reason}")
 
 
-def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int):
+def _save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int):
     logger.info(f"Saving cache for endpoint {endpoint}, params {params}, ttl {ttl}")
     fake_req = PreparedRequest()
     fake_req.prepare(method="GET",
@@ -112,7 +112,7 @@ def send_batch(ttl=600):
         break
 
     for index, response in enumerate(responses):
-        save_cache_manually(batched_endpoints[index][0], batched_payload[index], response, batched_endpoints[index][1])
+        _save_cache_manually(batched_endpoints[index][0], batched_payload[index], response, batched_endpoints[index][1])
 
     batched_endpoints.clear()
     batched_payload.clear()

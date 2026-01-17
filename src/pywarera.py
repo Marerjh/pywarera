@@ -12,6 +12,15 @@ countries = dict()
 def clear_cache():
     wareraapi.s.cache.clear()
 
+def get_user(user_id: str) -> User:
+    return users_manager.get_user(user_id)
+
+def get_users(users_ids: list[str]) -> list[User]:
+    return users_manager.get_users(users_ids)
+
+def get_username_by_id(user_id: str) -> str:
+    return users_manager.get_username_by_id(user_id)
+
 
 def get_government(country_id: str) -> Government:
     return Government(wareraapi.government_get_by_country_id(country_id))
@@ -37,7 +46,7 @@ def get_country_id_by_name(country_name: str) -> str:
         return get_country_id_by_name(country_name)
 
 
-def get_all_country_citizens_id(country_id: str) -> list[str]:
+def get_country_citizens_id(country_id: str) -> list[str]:
     to_return = []
     cursor = ""
     while cursor is not None:
@@ -45,12 +54,12 @@ def get_all_country_citizens_id(country_id: str) -> list[str]:
         to_return.extend([item["_id"] for item in items])
     return to_return
 
-def get_all_country_citizens(country_id: str) -> list[User]:
-    ids = get_all_country_citizens_id(country_id)
+def get_country_citizens(country_id: str) -> list[User]:
+    ids = get_country_citizens_id(country_id)
     return users_manager.get_users(ids)
 
 def get_country_citizens_ids_by_name(country_name: str) -> list[str]:
-    return get_all_country_citizens_id(get_country_id_by_name(country_name))
+    return get_country_citizens_id(get_country_id_by_name(country_name))
 
 def get_country_citizens_by_name(country_name: str) -> list[User]:
     ids = get_country_citizens_ids_by_name(country_name)
@@ -68,7 +77,7 @@ def get_companies_ids_of_player(user_id: str) -> list[str]:
 
 def get_all_companies_of_country_citizens(country_id: str) -> list[str]:
     to_return = []
-    for i in get_all_country_citizens_id(country_id):
+    for i in get_country_citizens_id(country_id):
         to_return.extend(get_companies_ids_of_player(i))
     return to_return
 
