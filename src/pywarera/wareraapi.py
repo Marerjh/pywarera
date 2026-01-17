@@ -9,7 +9,7 @@ import json
 import time
 from typing import Literal
 
-
+# Clearing of expired cache
 s = CachedSession(use_temp=True)
 s.cache.delete(expired=True)
 
@@ -20,6 +20,7 @@ BATCH_LIMIT = 100
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# These two lists should always be synchronized
 batched_endpoints = []
 batched_payload = []
 
@@ -28,7 +29,7 @@ class WarEraApiException(Exception):
 
 
 def send_request(endpoint, data=None, ttl=0) -> dict | list:
-    s.cache.delete(expired=True)
+    s.cache.delete(expired=True)  # clearing of expired cache every time request is being prepared
     url = f"https://api2.warera.io/trpc{endpoint}"
     params = {"input": json.dumps(data)} if data else None
     logger.info(f"Creating request: {url} with params {params}")
@@ -65,6 +66,7 @@ def send_request(endpoint, data=None, ttl=0) -> dict | list:
 
 def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int):
     logger.info(f"Saving cache for endpoint {endpoint}, params {params}, ttl {ttl}")
+    # We need that fake response to search for it (or store it) in the cache via requests_cache module
     fake_req = requests.PreparedRequest()
     fake_req.prepare(method="GET",
         url=f"https://api2.warera.io/trpc{endpoint}",
@@ -73,6 +75,7 @@ def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int):
             "Accept": "application/json"
         },
         params={"input": json.dumps(params)} if params else None)
+    # If already cached and not expired then do nothing
     if s.cache.contains(request=fake_req) and not s.cache.get_response(key=s.cache.create_key(request=fake_req)).is_expired:
         logger.info("Tried to create a manual cache from batch, but data is already cached. Terminated")
         return False
@@ -97,11 +100,14 @@ def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int):
 
 
 def send_batch(ttl=600):
+    """This method splits and sends batched requests, as well as returns and caches batched responses"""
     batch_limit = BATCH_LIMIT or 9999
-    cycle, max_cycle = 0, math.ceil(len(batched_endpoints) / batch_limit)
+    cycle, max_cycle = 0, math.ceil(len(batched_endpoints) / batch_limit)  # How much batches to prepare
     responses = []
     while cycle < max_cycle:
+        # /endpoints,endpoint,endpoint?batch=1?input=<payload>
         endpoints_str = "/" + ",".join(ep[1:] for ep, _ in batched_endpoints[cycle * batch_limit:(cycle + 1) * batch_limit])
+        # Input of endpoints
         input_payload = {str(i): p for i, p in enumerate(batched_payload[cycle * batch_limit:(cycle + 1) * batch_limit])}
         responses.extend(send_request(f"{endpoints_str}?batch=1", data=input_payload, ttl=ttl))
         if not cycle + 1 == max_cycle:
@@ -110,6 +116,7 @@ def send_batch(ttl=600):
             continue
         break
 
+    # Here we cache every response from a batch in case something will be requested independently
     for index, response in enumerate(responses):
         save_cache_manually(batched_endpoints[index][0], batched_payload[index], response, batched_endpoints[index][1])
 
@@ -119,11 +126,12 @@ def send_batch(ttl=600):
 
 
 def add_to_batch(endpoint, payload, ttl):
+    # These two lists should always be synchronized
     batched_endpoints.append((endpoint, ttl))
     batched_payload.append(payload)
 
 
-def clean(dictionary: dict) -> dict:  ## This one was made with ChatGPT :( I was too tired
+def clean(dictionary: dict) -> dict:  # This method was made with ChatGPT :( Shame on me
     return {k: v for k, v in dictionary.items() if v not in (None, "")}
 
 
