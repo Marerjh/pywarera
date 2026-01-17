@@ -17,7 +17,6 @@ DELAY_SECONDS = 1
 BATCH_DELAY = 5
 BATCH_LIMIT = 100
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # These two lists should always be synchronized
@@ -141,9 +140,9 @@ def company_get_by_id(company_id: str, do_batch=False) -> dict:
         "companyId": company_id
     }
     if not do_batch:
-        return send_request("/company.getById", payload, ttl=60)["result"]["data"]
+        return send_request("/company.getById", payload, ttl=600)["result"]["data"]
     else:
-        add_to_batch("/company.getById", payload, ttl=60)
+        add_to_batch("/company.getById", payload, ttl=600)
 
 def company_get_companies(user_id: str = None, org_id: str = None, cursor: str = None, per_page: int = 10) -> tuple[list[str], str | None]:
     """Retrieves a paginated list of companies with optional filtering
@@ -169,7 +168,7 @@ def country_get_country_by_id(country_id: str) -> dict:
     payload = {
         "countryId": country_id
     }
-    return send_request("/country.getCountryById", payload, ttl=60)["result"]["data"]
+    return send_request("/country.getCountryById", payload, ttl=600)["result"]["data"]
 
 
 def country_get_all_countries(forced_request=False) -> dict:
@@ -182,7 +181,7 @@ def government_get_by_country_id(country_id: str) -> dict:
     payload = {
         "countryId": country_id
     }
-    return send_request("/government.getByCountryId", payload, ttl=60)["result"]["data"]
+    return send_request("/government.getByCountryId", payload, ttl=600)["result"]["data"]
 
 
 def region_get_by_id(region_id: str) -> dict:
