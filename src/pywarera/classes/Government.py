@@ -9,8 +9,8 @@ class Government:
         self.vicePresident: str | None = data.get("vicePresident", None)
         self.minOfEconomy: str | None = data.get("minOfEconomy", None)
 
-    def have_president(self) -> bool:
+    def has_president(self) -> bool:
         return self.president is not None
 
-    def have_congress(self) -> bool:
+    def has_congress(self) -> bool:
         return self.congress_members is not []

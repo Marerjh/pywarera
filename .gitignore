@@ -4,5 +4,6 @@
 /dist/
 /.cache/
 /.idea/
-/pywarera.egg-info/
+*.egg-info/
 *.log
+.gitignore
