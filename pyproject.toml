@@ -1,6 +1,6 @@
 [project]
 name = "pywarera"
-version = "0.1.0"
+version = "0.1.1"
 authors = [
   { name="Marerjh" },
 ]
@@ -13,7 +13,7 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
 ]
-license = "MIT"
+license = "GPL-3.0-only"
 license-files = ["LICENSE"]
 
 dependencies = [
