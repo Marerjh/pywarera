@@ -10,8 +10,10 @@ import time
 from typing import Literal
 
 # Clearing of expired cache
-s = CachedSession(use_temp=True)
+s = CachedSession(use_temp=True, ignored_parameters=["X-API-KEY"])
 s.cache.delete(expired=True)
+
+API_TOKEN = ""
 
 DELAY_SECONDS = 1
 BATCH_DELAY = 5
@@ -19,30 +21,93 @@ BATCH_LIMIT = 100
 
 logger = logging.getLogger(__name__)
 
-# These two lists should always be synchronized
-batched_endpoints = []
-batched_payload = []
+class BatchedEndpoint:
+    def __init__(self, endpoint, payload, cache_ttl):
+        self.endpoint = endpoint
+        self.payload = payload
+        self.cache_ttl = cache_ttl
+
+class BatchSession:
+    def __init__(self, cache_ttl=600):
+        self.cache_ttl = cache_ttl
+        self.responses = None
+        self.batched_endpoints = []
+        self.batched_payload = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is None:
+            self.responses = self.send_batch(self.cache_ttl)
+
+    def add(self, batched_endpoint: BatchedEndpoint):
+        # These two lists should always be synchronized
+        self.batched_endpoints.append((batched_endpoint.endpoint, batched_endpoint.cache_ttl))
+        self.batched_payload.append(batched_endpoint.payload)
+
+    def send_batch(self, ttl=600):
+        """This method splits and sends batched requests, as well as returns and caches batched responses"""
+        batch_limit = BATCH_LIMIT or 9999
+        cycle, max_cycle = 0, math.ceil(len(self.batched_endpoints) / batch_limit)  # How much batches to prepare
+        responses = []
+        while cycle < max_cycle:
+            # /endpoints,endpoint,endpoint?batch=1?input=<payload>
+            endpoints_str = "/" + ",".join(
+                ep[1:] for ep, _ in self.batched_endpoints[cycle * batch_limit:(cycle + 1) * batch_limit])
+            # Input of endpoints
+            input_payload = {str(i): p for i, p in
+                             enumerate(self.batched_payload[cycle * batch_limit:(cycle + 1) * batch_limit])}
+            responses.extend(send_request(f"{endpoints_str}?batch=1", data=input_payload, ttl=ttl))
+            if not cycle + 1 == max_cycle:
+                cycle += 1
+                time.sleep(BATCH_DELAY)
+                continue
+            break
+
+        # Here we cache every response from a batch in case something will be requested independently
+        for index, response in enumerate(responses):
+            save_cache_manually(self.batched_endpoints[index][0], self.batched_payload[index], response,
+                                self.batched_endpoints[index][1])
+
+        self.batched_endpoints.clear()
+        self.batched_payload.clear()
+        return responses
 
 class WarEraApiException(Exception):
     pass
 
+def update_api_token(new_api_token):
+    global API_TOKEN
+    API_TOKEN = new_api_token
 
 def send_request(endpoint, data=None, ttl=0) -> dict | list:
     s.cache.delete(expired=True)  # clearing of expired cache every time request is being prepared
     url = f"https://api2.warera.io/trpc{endpoint}"
     params = {"input": json.dumps(data)} if data else None
     logger.info(f"Creating request: {url} with params {params}")
-    cached_response = s.cache.get_response(s.cache.create_key(requests.Request(method="GET", url=url, params=params, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36", "Accept": "application/json"}).prepare()), False)
+    cached_response = s.cache.get_response(
+        s.cache.create_key(requests.Request(
+            method="GET",
+            url=url,
+            params=params,
+            headers={
+                "X-API-Key":API_TOKEN,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+                "Accept": "application/json"
+            }
+        ).prepare()), False)
     if cached_response:
         logger.info(f"Found request in cache, no request created")
         return cached_response.json()
     time.sleep(DELAY_SECONDS)
     try:
         r = s.get(
-            url,
+            url=url,
             expire_after=ttl,
             params=params,
             headers={
+                "X-API-Key": API_TOKEN,
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
                 "Accept": "application/json"
             }
@@ -55,10 +120,16 @@ def send_request(endpoint, data=None, ttl=0) -> dict | list:
     except (ValueError, json.JSONDecodeError) as e:
         logger.error("Bad JSON in response")
         raise WarEraApiException("Bad JSON in response") from e
-
     if 200 <= r.status_code <= 299:
         logger.info("Success!")
         return return_data
+    elif r.status_code == 429:
+        limits_reset = int(r.headers.get('Ratelimit-Reset', 60)) + 1
+        logger.warning(f"API returned 429: Too much requests. Retrying in: {limits_reset}")
+        time.sleep(limits_reset)
+        return send_request(endpoint, data, ttl)
+    elif r.status_code == 401 and return_data.get("error", {}).get("message", False) == "API token required":
+        logger.error(f"Please specify api-token with wareraapi.update_api_token(<YOUR_TOKEN>)")
     logger.error(f"{r.status_code}: {r.reason}")
     raise WarEraApiException(f"{r.status_code}: {r.reason}")
 
@@ -67,13 +138,16 @@ def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int):
     logger.info(f"Saving cache for endpoint {endpoint}, params {params}, ttl {ttl}")
     # We need that fake response to search for it (or store it) in the cache via requests_cache module
     fake_req = requests.PreparedRequest()
-    fake_req.prepare(method="GET",
+    fake_req.prepare(
+        method="GET",
         url=f"https://api2.warera.io/trpc{endpoint}",
         headers={
+            "X-API-Key": API_TOKEN,
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
             "Accept": "application/json"
         },
-        params={"input": json.dumps(params)} if params else None)
+        params={"input": json.dumps(params)} if params else None
+    )
     # If already cached and not expired then do nothing
     if s.cache.contains(request=fake_req) and not s.cache.get_response(key=s.cache.create_key(request=fake_req)).is_expired:
         logger.info("Tried to create a manual cache from batch, but data is already cached. Terminated")
@@ -98,51 +172,20 @@ def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int):
     logger.info("Succesfully created manual cache")
 
 
-def send_batch(ttl=600):
-    """This method splits and sends batched requests, as well as returns and caches batched responses"""
-    batch_limit = BATCH_LIMIT or 9999
-    cycle, max_cycle = 0, math.ceil(len(batched_endpoints) / batch_limit)  # How much batches to prepare
-    responses = []
-    while cycle < max_cycle:
-        # /endpoints,endpoint,endpoint?batch=1?input=<payload>
-        endpoints_str = "/" + ",".join(ep[1:] for ep, _ in batched_endpoints[cycle * batch_limit:(cycle + 1) * batch_limit])
-        # Input of endpoints
-        input_payload = {str(i): p for i, p in enumerate(batched_payload[cycle * batch_limit:(cycle + 1) * batch_limit])}
-        responses.extend(send_request(f"{endpoints_str}?batch=1", data=input_payload, ttl=ttl))
-        if not cycle + 1 == max_cycle:
-            cycle += 1
-            time.sleep(BATCH_DELAY)
-            continue
-        break
-
-    # Here we cache every response from a batch in case something will be requested independently
-    for index, response in enumerate(responses):
-        save_cache_manually(batched_endpoints[index][0], batched_payload[index], response, batched_endpoints[index][1])
-
-    batched_endpoints.clear()
-    batched_payload.clear()
-    return responses
-
-
-def add_to_batch(endpoint, payload, ttl):
-    # These two lists should always be synchronized
-    batched_endpoints.append((endpoint, ttl))
-    batched_payload.append(payload)
-
-
 def clean(dictionary: dict) -> dict:  # This method was made with ChatGPT :( Shame on me
     return {k: v for k, v in dictionary.items() if v not in (None, "")}
 
 
-def company_get_by_id(company_id: str, do_batch=False) -> dict:
+def company_get_by_id(company_id: str, batched: bool = False) -> dict | BatchedEndpoint:
     """Retrieves detailed information about a specific company"""
     payload = {
         "companyId": company_id
     }
-    if not do_batch:
-        return send_request("/company.getById", payload, ttl=600)["result"]["data"]
-    else:
-        add_to_batch("/company.getById", payload, ttl=600)
+    if batched:
+        return BatchedEndpoint("/company.getById", payload, 600)
+    return send_request("/company.getById", payload, ttl=600)["result"]["data"]
+
+
 
 def company_get_companies(user_id: str = None, org_id: str = None, cursor: str = None, per_page: int = 10) -> tuple[list[str], str | None]:
     """Retrieves a paginated list of companies with optional filtering
@@ -160,6 +203,21 @@ def company_get_companies(user_id: str = None, org_id: str = None, cursor: str =
         "perPage": per_page
     })
     respond = send_request("/company.getCompanies", payload, ttl=60)["result"]["data"]
+    return respond["items"], respond.setdefault("nextCursor", None)
+
+
+def event_get_events_paginated(country_id: str = None, event_types: list[str] = None, cursor: str = None, limit: int = 10) -> tuple[list[str], str | None]:
+    """Retrieves a paginated list of events with optional country and event type filters
+    :return: Tuple(list of items, next cursor as str or None if no more pages)
+    """
+    limit = min(max(1, limit), 100)
+    payload = clean({
+        "countryId": country_id,
+        "eventTypes": event_types,
+        "cursor": cursor,
+        "limit": limit
+    })
+    respond = send_request("/event.getEventsPaginated", payload, ttl=60)["result"]["data"]
     return respond["items"], respond.setdefault("nextCursor", None)
 
 
@@ -214,7 +272,14 @@ def battle_get_live_battle_data(battle_id: int, round_number: int = 0) -> dict:
     return send_request("/battle.getLiveBattleData", payload, ttl=0)["result"]["data"]
 
 
-def battle_get_battles(is_active: bool = True, limit: int = 10, cursor: str = None, direction: Literal["forward", "backward"] = "forward", filter: Literal["all", "yourCountry", "yourEnemies"] = "all", defender_region_id: str = None, war_id: str = None, country_id: str = None) -> tuple[list[dict], str | None]:
+def battle_get_battles(is_active: bool = True,
+                       limit: int = 10,
+                       cursor: str = None,
+                       direction: Literal["forward", "backward"] = "forward",
+                       filter: Literal["all", "yourCountry", "yourEnemies"] = "all",
+                       defender_region_id: str = None,
+                       war_id: str = None,
+                       country_id: str = None) -> tuple[list[dict], str | None]:
     """Retrieves a list of battles
     :param is_active: Whether to return active battles. Default is True
     :param limit: The limit of battles to get. Minumum 1, maximum 100. Default 10
@@ -257,7 +322,12 @@ def round_get_last_hits(round_id: str) -> dict:
     return send_request("/round.getLastHits", payload, ttl=5)["result"]["data"]
 
 
-def battle_ranking_get_ranking(data_type: Literal["damage", "points", "money"], type: Literal["user", "country", "mu"], side: Literal["attacker", "defender"], battle_id: str | None = None, round_id: str | None = None, war_id: str | None = None) -> list[dict]:
+def battle_ranking_get_ranking(data_type: Literal["damage", "points", "money"],
+                               type: Literal["user", "country", "mu"],
+                               side: Literal["attacker", "defender"],
+                               battle_id: str | None = None,
+                               round_id: str | None = None,
+                               war_id: str | None = None) -> list[dict]:
     """Retrieves damage, ground, or money rankings for users or countries in battles, rounds, or wars"""
     payload = clean({
         "battleId": battle_id,
@@ -273,7 +343,7 @@ def battle_ranking_get_ranking(data_type: Literal["damage", "points", "money"], 
 def item_trading_get_prices(forced_request=False) -> dict[str, float]:
     """Retrieves current market prices for all tradeable items
     :return: Dict{id of resource: average price of resource}"""
-    return send_request("/itemTrading.getPrices", ttl=5)["result"]["data"]
+    return send_request("/itemTrading.getPrices", ttl=60)["result"]["data"]
 
 
 def trading_order_get_top_orders(item_code: str, limit:int = 10) -> tuple[dict, dict]:
@@ -303,7 +373,7 @@ def work_offer_get_by_id(work_offer_id: str) -> dict:
     payload = {
         "workOfferId": work_offer_id
     }
-    return send_request("/workOffer.getById", payload, ttl=5)["result"]["data"]
+    return send_request("/workOffer.getById", payload, ttl=600)["result"]["data"]
 
 
 def work_offer_get_work_offer_by_company_id(company_id: str) -> dict:
@@ -311,20 +381,22 @@ def work_offer_get_work_offer_by_company_id(company_id: str) -> dict:
     payload = {
         "companyId": company_id
     }
-    return send_request("/workOffer.getWorkOfferByCompanyId", payload, ttl=5)["result"]["data"]
+    return send_request("/workOffer.getWorkOfferByCompanyId", payload, ttl=600)["result"]["data"]
 
 
-def work_offer_get_work_offers_paginated(user_id: str = None, region_id: str = None, cursor: str = None, limit: int = 10):
+def work_offer_get_work_offers_paginated(user_id: str = None, region_id: str = None, cursor: str = None, energy: int = 0, production: int = 0, limit: int = 10):
     """Retrieves a paginated list of work offers with optional user and region filtering
     :return: Tuple(list of work offers, next cursor in str or None if not available)"""
     limit = min(max(1, limit), 100)
     payload = clean({
         "userId": user_id,
         "regionId": region_id,
+        "energy": energy,
+        "production": production,
         "cursor": cursor,
         "limit": limit
     })
-    respond = send_request("/workOffer.getWorkOffersPaginated", payload, ttl=5)["result"]["data"]
+    respond = send_request("/workOffer.getWorkOffersPaginated", payload, ttl=60)["result"]["data"]
     return respond["items"], respond.setdefault("nextCursor", None)
 
 
@@ -354,15 +426,15 @@ def game_config_get_game_config(forced_request=False) -> dict:
     return send_request("/gameConfig.getGameConfig", ttl=86400)["result"]["data"]
 
 
-def user_get_user_lite(user_id: str, do_batch=False) -> dict:
+def user_get_user_lite(user_id: str, batched=False) -> dict | BatchedEndpoint:
     """Retrieves basic public information about a user including username, skills, and rankings"""
     payload = {
         "userId": user_id
     }
-    if not do_batch:
-        return send_request("/user.getUserLite", payload, ttl=600)["result"]["data"]
-    else:
-        add_to_batch("/user.getUserLite", payload, ttl=600)
+    if batched:
+        return BatchedEndpoint("/user.getUserLite", payload, cache_ttl=600)
+    return send_request("/user.getUserLite", payload, ttl=600)["result"]["data"]
+
 
 
 def user_get_users_by_country(country_id: str, limit: int = 10, cursor: str = None) -> tuple[list, str | None]:
@@ -401,6 +473,29 @@ def article_get_articles_paginated(type: Literal["weekly", "top", "my", "subscri
     return respond["items"], respond.setdefault("nextCursor", None)
 
 
+def mu_get_by_id(mu_id: str) -> dict:
+    """Retrieves detailed information about a specific military unit"""
+    payload = clean({
+        "muId": mu_id,
+    })
+    return send_request("/mu.getById", payload, ttl=600)["result"]["data"]
+
+
+def mu_get_many_paginated(limit: int = 20, cursor: str = None, user_id: str = None, member_id: str = None, org_id: str = None, search: str = None) -> tuple[dict, str | None]:
+    """Retrieves a paginated list of military units with optional filters"""
+    limit = min(max(1, limit), 100)
+    payload = clean({
+      "limit": limit,
+      "cursor": cursor,
+      "memberId": member_id,
+      "userId": user_id,
+      "orgId": org_id,
+      "search": search
+    })
+    respond = send_request("/mu.getManyPaginated", payload, ttl=600)["result"]["data"]
+    return respond["items"], respond.setdefault("nextCursor", None)
+
+
 def transaction_get_paginated_transactions(limit: int = 10, cursor: str = None, user_id: str = None, mu_id: str = None, country_id: str = None, item_code: str = None, transaction_type: str = None) -> tuple[list, str | None]:
     """Retrieves a paginated list of transactions"""
     limit = min(max(1, limit), 100)
@@ -413,7 +508,7 @@ def transaction_get_paginated_transactions(limit: int = 10, cursor: str = None, 
         "itemCode": item_code,
         "transactionType": transaction_type
     })
-    respond = send_request("/transaction.getPaginatedTransactions", payload, ttl=5)["result"]["data"]
+    respond = send_request("/transaction.getPaginatedTransactions", payload, ttl=60)["result"]["data"]
     return respond["items"], respond.setdefault("nextCursor", None)
 
 
@@ -426,3 +521,22 @@ def upgrade_get_upgrade_by_type_and_entity(upgrade_type: Literal["bunker", "base
         "muId": mu_id
     })
     return send_request("/upgrade.getUpgradeByTypeAndEntity", payload, ttl=600)["result"]["data"]
+
+
+def worker_get_workers(user_id: str = None, company_id: str = None) -> dict:
+    """Get workers for a company or user"""
+    if user_id is None and company_id is None:
+        raise WarEraApiException("No parameters were specified in worker_get_workers()")
+    payload = clean({
+        "userId": user_id,
+        "companyId": company_id
+    })
+    return send_request("/worker.getWorkers", payload, ttl=600)["result"]["data"]
+
+
+def worker_get_total_workers_count(user_id: str) -> dict:
+    """Get total workers count for a user"""
+    payload = clean({
+        "userId": user_id
+    })
+    return send_request("/worker.getTotalWorkersCount", payload, ttl=600)["result"]["data"]

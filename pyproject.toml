@@ -1,6 +1,6 @@
 [project]
 name = "pywarera"
-version = "0.1.0"
+version = "0.1.1"
 authors = [
   { name="Marerjh" },
 ]
@@ -20,6 +20,9 @@ dependencies = [
     "requests==2.32.5",
     "requests-cache==1.2.1"
 ]
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [project.urls]
 Homepage = "https://github.com/Marerjh/pywarera"

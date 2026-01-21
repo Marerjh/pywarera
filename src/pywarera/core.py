@@ -1,8 +1,10 @@
-from src.pywarera import wareraapi
+from . import wareraapi
 from .classes.User import User
 from .classes.Country import Country
 from .classes.Company import Company
 from .classes.Government import Government
+from .classes.MilitaryUnit import MilitaryUnit
+from .wareraapi import BatchSession
 from typing import Literal
 
 countries = dict()
@@ -17,10 +19,10 @@ def get_user(user_id: str) -> User:
 
 
 def get_users(users_ids: list[str]) -> list[User]:
-    for user_id in users_ids:
-        wareraapi.user_get_user_lite(user_id, do_batch=True)
-    respond = wareraapi.send_batch()
-    return [User(user_data["result"]["data"]) for user_data in respond]
+    with BatchSession() as batch:
+        for user_id in users_ids:
+            batch.add(wareraapi.user_get_user_lite(user_id, batched=True))
+    return [User(user_data["result"]["data"]) for user_data in batch.responses]
 
 
 def get_government(country_id: str) -> Government:
@@ -76,10 +78,21 @@ def get_companies_ids_of_player(user_id: str) -> list[str]:
     return to_return
 
 
-def get_all_companies_of_country_citizens(country_id: str) -> list[str]:
+def get_all_companies_ids_of_country_citizens(country_id: str) -> list[str]:
     to_return = []
     for i in get_all_country_citizens_id(country_id):
         to_return.extend(get_companies_ids_of_player(i))
+    return to_return
+
+
+def get_all_companies_of_player(user_id: str) -> list[Company]:
+    to_return = []
+    companies_ids = get_companies_ids_of_player(user_id)
+    with BatchSession() as batch:
+        for company_id in companies_ids:
+            batch.add(wareraapi.company_get_by_id(company_id, batched=True))
+    for response in batch.responses:
+        to_return.append(Company(response["result"]["data"]))
     return to_return
 
 
@@ -91,6 +104,17 @@ def get_company_object(company_id: str | list) -> Company | list[Company]:
         return to_return
     else:
         return Company(wareraapi.company_get_by_id(company_id))
+
+
+def get_military_unit(mu_id: str) -> MilitaryUnit:
+    return MilitaryUnit(wareraapi.mu_get_by_id(mu_id))
+
+
+def get_military_units_from_paginated(items: list) -> tuple[MilitaryUnit]:
+    to_return = []
+    for mu_data in items:
+        to_return.append(MilitaryUnit(mu_data))
+    return tuple(to_return)
 
 
 def get_users_in_battle_id(battle_id: str, subject: Literal["user", "mu", "country"] = "user") -> tuple[set, set]:
