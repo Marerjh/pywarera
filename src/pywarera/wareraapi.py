@@ -356,7 +356,7 @@ def battle_ranking_get_ranking(data_type: Literal["damage", "points", "money"],
         "type": type,
         "side": side
     })
-    return EndpointCall(endpoint_path="/round.getLastHits", payload=payload, cache_tll=60)
+    return EndpointCall(endpoint_path="/battleRanking.getRanking", payload=payload, cache_tll=60)
 
 
 def item_trading_get_prices(forced_request=False) -> EndpointCall:
@@ -383,7 +383,7 @@ def item_offer_get_by_id(item_offer_id: str) -> EndpointCall:
     payload = {
         "itemOfferId": item_offer_id
     }
-    return EndpointCall(endpoint_path="/tradingOrder.getTopOrders", payload=payload, cache_tll=5)
+    return EndpointCall(endpoint_path="/itemOffer.getById", payload=payload, cache_tll=5)
 
 
 def work_offer_get_by_id(work_offer_id: str) -> EndpointCall:
