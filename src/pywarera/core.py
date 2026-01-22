@@ -4,6 +4,8 @@ from .classes.Country import Country
 from .classes.Company import Company
 from .classes.Government import Government
 from .classes.MilitaryUnit import MilitaryUnit
+from .classes.ItemPrices import ItemPrices
+from .classes.Region import Region
 from .wareraapi import BatchSession
 from typing import Literal
 
@@ -14,6 +16,26 @@ def clear_cache():
     wareraapi.s.cache.clear()
 
 
+def get_user_wage(user_id, cursor=None):
+    wage = 0
+    wage_transactions = wareraapi.transaction_get_paginated_transactions(limit=20, user_id=user_id, transaction_type="wage", cursor=cursor).execute()
+    if len(wage_transactions[0]) > 0:
+        for transaction in wage_transactions[0]:
+            if transaction["sellerId"] == user_id:
+                wage = transaction["money"] / transaction["quantity"]
+        if wage == 0:
+            wage = get_user_wage(user_id, wage_transactions[1])
+    return wage
+
+
+def get_trading_prices() -> ItemPrices:
+    return ItemPrices(wareraapi.item_trading_get_prices())
+
+
+def get_region(region_id: str) -> Region:
+    return Region(wareraapi.region_get_regions_object().execute()[region_id])
+
+
 def get_user(user_id: str) -> User:
     return User(wareraapi.user_get_user_lite(user_id))
 
@@ -21,7 +43,7 @@ def get_user(user_id: str) -> User:
 def get_users(users_ids: list[str]) -> list[User]:
     with BatchSession() as batch:
         for user_id in users_ids:
-            batch.add(wareraapi.user_get_user_lite(user_id, batched=True))
+            batch.add(wareraapi.user_get_user_lite(user_id))
     return [User(user_data["result"]["data"]) for user_data in batch.responses]
 
 
@@ -35,8 +57,8 @@ def get_country(country_id: str) -> Country:
 
 def get_all_countries(return_list: bool = False) -> list[Country] | dict[str, Country]:
     if return_list:
-        return [Country(i) for i in wareraapi.country_get_all_countries()]
-    return {i["_id"]: Country(i) for i in wareraapi.country_get_all_countries()}
+        return [Country(i) for i in wareraapi.country_get_all_countries().execute()]
+    return {i["_id"]: Country(i) for i in wareraapi.country_get_all_countries().execute()}
 
 def get_country_id_by_name(country_name: str) -> str:
     global countries
@@ -53,7 +75,7 @@ def get_all_country_citizens_id(country_id: str) -> list[str]:
     to_return = []
     cursor = ""
     while cursor is not None:
-        items, cursor = wareraapi.user_get_users_by_country(country_id, limit=100, cursor=cursor)
+        items, cursor = wareraapi.user_get_users_by_country(country_id, limit=100, cursor=cursor).execute()
         to_return.extend([item["_id"] for item in items])
     return to_return
 
@@ -73,7 +95,7 @@ def get_companies_ids_of_player(user_id: str) -> list[str]:
     to_return = []
     cursor = ""
     while cursor is not None:
-        items, cursor = wareraapi.company_get_companies(user_id, per_page=12, cursor=cursor)
+        items, cursor = wareraapi.company_get_companies(user_id, per_page=12, cursor=cursor).execute()
         to_return.extend([item for item in items])
     return to_return
 
@@ -99,8 +121,11 @@ def get_all_companies_of_player(user_id: str) -> list[Company]:
 def get_company_object(company_id: str | list) -> Company | list[Company]:
     if type(company_id) is list:
         to_return = []
-        for id in company_id:
-            to_return.append(Company(wareraapi.company_get_by_id(id)))
+        with BatchSession() as batch:
+            for company_idd in company_id:
+                batch.add(wareraapi.company_get_by_id(company_idd, batched=True))
+        for response in batch.responses:
+            to_return.append(Company(response["result"]["data"]))
         return to_return
     else:
         return Company(wareraapi.company_get_by_id(company_id))
@@ -118,8 +143,8 @@ def get_military_units_from_paginated(items: list) -> tuple[MilitaryUnit]:
 
 
 def get_users_in_battle_id(battle_id: str, subject: Literal["user", "mu", "country"] = "user") -> tuple[set, set]:
-    items_attackers = wareraapi.battle_ranking_get_ranking(type=subject, data_type="damage", battle_id=battle_id, side="attacker")
-    items_defenders = wareraapi.battle_ranking_get_ranking(type=subject, data_type="damage", battle_id=battle_id, side="defender")
+    items_attackers = wareraapi.battle_ranking_get_ranking(type=subject, data_type="damage", battle_id=battle_id, side="attacker").execute()
+    items_defenders = wareraapi.battle_ranking_get_ranking(type=subject, data_type="damage", battle_id=battle_id, side="defender").execute()
     items_attackers = set([i[subject] for i in [k for k in items_attackers]] if type(items_attackers) == list else [i[subject] for i in items_attackers])
     items_defenders = set([i[subject] for i in [k for k in items_defenders]] if type(items_defenders) == list else [i[subject] for i in items_defenders])
     return items_attackers, items_defenders

@@ -1,5 +1,6 @@
 import math
 import logging
+from enum import Enum
 
 import requests
 from requests_cache import CachedSession
@@ -15,17 +16,33 @@ s.cache.delete(expired=True)
 
 API_TOKEN = ""
 
-DELAY_SECONDS = 1
+DELAY_SECONDS = 0.25
 BATCH_DELAY = 5
 BATCH_LIMIT = 100
 
 logger = logging.getLogger(__name__)
 
-class BatchedEndpoint:
-    def __init__(self, endpoint, payload, cache_ttl):
-        self.endpoint = endpoint
-        self.payload = payload
-        self.cache_ttl = cache_ttl
+
+class ResponseType(Enum):
+    PAGINATED_LIST = "paginated_list"
+    REGULAR = "regular"
+
+
+class EndpointCall:
+    def __init__(self, endpoint_path: str, cache_tll: int = 600, response_type: ResponseType = ResponseType.REGULAR, payload: dict = None, ):
+        self.endpoint_path: str = endpoint_path
+        self.payload: dict = payload
+        self.cache_ttl: int = cache_tll
+        self.response_type: ResponseType = response_type
+
+    def execute(self) -> dict | tuple[dict, str | None]:
+        print(send_request(endpoint=self.endpoint_path, data=self.payload, ttl=self.cache_ttl))
+        response = send_request(endpoint=self.endpoint_path, data=self.payload, ttl=self.cache_ttl)["result"].get("data")
+        if self.response_type == ResponseType.REGULAR:
+            return response
+        elif self.response_type == ResponseType.PAGINATED_LIST:
+            return response.get("items"), response.get("nextCursor")
+
 
 class BatchSession:
     def __init__(self, cache_ttl=600):
@@ -41,9 +58,9 @@ class BatchSession:
         if exc_type is None:
             self.responses = self.send_batch(self.cache_ttl)
 
-    def add(self, batched_endpoint: BatchedEndpoint):
+    def add(self, batched_endpoint: EndpointCall):
         # These two lists should always be synchronized
-        self.batched_endpoints.append((batched_endpoint.endpoint, batched_endpoint.cache_ttl))
+        self.batched_endpoints.append((batched_endpoint.endpoint_path, batched_endpoint.cache_ttl))
         self.batched_payload.append(batched_endpoint.payload)
 
     def send_batch(self, ttl=600):
@@ -77,9 +94,11 @@ class BatchSession:
 class WarEraApiException(Exception):
     pass
 
+
 def update_api_token(new_api_token):
     global API_TOKEN
     API_TOKEN = new_api_token
+
 
 def send_request(endpoint, data=None, ttl=0) -> dict | list:
     s.cache.delete(expired=True)  # clearing of expired cache every time request is being prepared
@@ -176,18 +195,16 @@ def clean(dictionary: dict) -> dict:  # This method was made with ChatGPT :( Sha
     return {k: v for k, v in dictionary.items() if v not in (None, "")}
 
 
-def company_get_by_id(company_id: str, batched: bool = False) -> dict | BatchedEndpoint:
+def company_get_by_id(company_id: str, batched: bool = False) -> EndpointCall:
     """Retrieves detailed information about a specific company"""
     payload = {
         "companyId": company_id
     }
-    if batched:
-        return BatchedEndpoint("/company.getById", payload, 600)
-    return send_request("/company.getById", payload, ttl=600)["result"]["data"]
+    return EndpointCall(endpoint_path="/company.getById", payload=payload)
 
 
 
-def company_get_companies(user_id: str = None, org_id: str = None, cursor: str = None, per_page: int = 10) -> tuple[list[str], str | None]:
+def company_get_companies(user_id: str = None, org_id: str = None, cursor: str = None, per_page: int = 10) -> EndpointCall:
     """Retrieves a paginated list of companies with optional filtering
     :param user_id: Optional user ID filter
     :param org_id: Optional organization ID filter
@@ -202,11 +219,12 @@ def company_get_companies(user_id: str = None, org_id: str = None, cursor: str =
         "cursor": cursor,
         "perPage": per_page
     })
-    respond = send_request("/company.getCompanies", payload, ttl=60)["result"]["data"]
-    return respond["items"], respond.setdefault("nextCursor", None)
+    return EndpointCall(endpoint_path="/company.getCompanies",
+                        payload=payload,
+                        response_type=ResponseType.PAGINATED_LIST)
 
 
-def event_get_events_paginated(country_id: str = None, event_types: list[str] = None, cursor: str = None, limit: int = 10) -> tuple[list[str], str | None]:
+def event_get_events_paginated(country_id: str = None, event_types: list[str] = None, cursor: str = None, limit: int = 10) -> EndpointCall:
     """Retrieves a paginated list of events with optional country and event type filters
     :return: Tuple(list of items, next cursor as str or None if no more pages)
     """
@@ -217,59 +235,61 @@ def event_get_events_paginated(country_id: str = None, event_types: list[str] = 
         "cursor": cursor,
         "limit": limit
     })
-    respond = send_request("/event.getEventsPaginated", payload, ttl=60)["result"]["data"]
-    return respond["items"], respond.setdefault("nextCursor", None)
+    return EndpointCall(endpoint_path="/event.getEventsPaginated",
+                        payload=payload,
+                        cache_tll=60,
+                        response_type=ResponseType.PAGINATED_LIST)
 
 
-def country_get_country_by_id(country_id: str) -> dict:
+def country_get_country_by_id(country_id: str) -> EndpointCall:
     """Retrieves detailed information about a specific country"""
     payload = {
         "countryId": country_id
     }
-    return send_request("/country.getCountryById", payload, ttl=600)["result"]["data"]
+    return EndpointCall(endpoint_path="/country.getCountryById", payload=payload)
 
 
-def country_get_all_countries(forced_request=False) -> dict:
+def country_get_all_countries() -> EndpointCall:
     """Retrieves a list of all available countries"""
-    return send_request("/country.getAllCountries", ttl=600)["result"]["data"]
+    return EndpointCall(endpoint_path="/country.getAllCountries")
 
 
-def government_get_by_country_id(country_id: str) -> dict:
+def government_get_by_country_id(country_id: str) -> EndpointCall:
     """Retrieves government information for a specific country"""
     payload = {
         "countryId": country_id
     }
-    return send_request("/government.getByCountryId", payload, ttl=600)["result"]["data"]
+    return EndpointCall(endpoint_path="/government.getByCountryId", payload=payload)
 
 
-def region_get_by_id(region_id: str) -> dict:
+def region_get_by_id(region_id: str) -> EndpointCall:
     """Retrieves detailed information about a specific region"""
     payload = {
         "regionId": region_id
     }
-    return send_request("/region.getById", payload, ttl=3600)["result"]["data"]
+    return EndpointCall(endpoint_path="/region.getById", payload=payload, cache_tll=3600)
 
 
-def region_get_regions_object(forced_request=False) -> dict:
+def region_get_regions_object() -> EndpointCall:
     """Retrieves a complete object containing all available regions"""
-    return send_request("/region.getRegionsObject", ttl=3600)["result"]["data"]
+    return EndpointCall(endpoint_path="/region.getRegionsObject", cache_tll=3600)
 
 
-def battle_get_by_id(battle_id: str) -> dict:
+def battle_get_by_id(battle_id: str) -> EndpointCall:
     """Retrieves detailed information about a specific battle"""
     payload = {
         "battleId": battle_id
     }
-    return send_request("/battle.getById", payload, ttl=60)["result"]["data"]
+    return EndpointCall(endpoint_path="/battle.getById", payload=payload, cache_tll=60)
 
 
-def battle_get_live_battle_data(battle_id: int, round_number: int = 0) -> dict:
+def battle_get_live_battle_data(battle_id: int, round_number: int = 0) -> EndpointCall:
     """Retrieves real-time battle data including current round information"""
     payload = clean({
         "battleId": battle_id,
         "roundNumber": round_number
     })
-    return send_request("/battle.getLiveBattleData", payload, ttl=0)["result"]["data"]
+    return EndpointCall(endpoint_path="/battle.getLiveBattleData", payload=payload, cache_tll=0)
 
 
 def battle_get_battles(is_active: bool = True,
@@ -279,7 +299,7 @@ def battle_get_battles(is_active: bool = True,
                        filter: Literal["all", "yourCountry", "yourEnemies"] = "all",
                        defender_region_id: str = None,
                        war_id: str = None,
-                       country_id: str = None) -> tuple[list[dict], str | None]:
+                       country_id: str = None) -> EndpointCall:
     """Retrieves a list of battles
     :param is_active: Whether to return active battles. Default is True
     :param limit: The limit of battles to get. Minumum 1, maximum 100. Default 10
@@ -302,24 +322,26 @@ def battle_get_battles(is_active: bool = True,
         "warId": war_id,
         "countryId": country_id
     })
-    respond = send_request("/battle.getBattles", payload, ttl=60)["result"]["data"]
-    return respond["items"], respond.setdefault("nextCursor", None)
+    return EndpointCall(endpoint_path="/battle.getBattles",
+                        payload=payload,
+                        cache_tll=60,
+                        response_type=ResponseType.PAGINATED_LIST)
 
 
-def round_get_by_id(round_id: str) -> dict:
+def round_get_by_id(round_id: str) -> EndpointCall:
     """Retrieves detailed information about a specific battle round"""
     payload = {
         "roundId": round_id
     }
-    return send_request("/round.getById", payload, ttl=60)["result"]["data"]
+    return EndpointCall(endpoint_path="/round.getById", payload=payload, cache_tll=60)
 
 
-def round_get_last_hits(round_id: str) -> dict:
+def round_get_last_hits(round_id: str) -> EndpointCall:
     """Retrieves the most recent hits/damages in a specific battle round"""
     payload = {
         "roundId": round_id
     }
-    return send_request("/round.getLastHits", payload, ttl=5)["result"]["data"]
+    return EndpointCall(endpoint_path="/round.getLastHits", payload=payload, cache_tll=5)
 
 
 def battle_ranking_get_ranking(data_type: Literal["damage", "points", "money"],
@@ -327,7 +349,7 @@ def battle_ranking_get_ranking(data_type: Literal["damage", "points", "money"],
                                side: Literal["attacker", "defender"],
                                battle_id: str | None = None,
                                round_id: str | None = None,
-                               war_id: str | None = None) -> list[dict]:
+                               war_id: str | None = None) -> EndpointCall:
     """Retrieves damage, ground, or money rankings for users or countries in battles, rounds, or wars"""
     payload = clean({
         "battleId": battle_id,
@@ -337,7 +359,7 @@ def battle_ranking_get_ranking(data_type: Literal["damage", "points", "money"],
         "type": type,
         "side": side
     })
-    return send_request("/battleRanking.getRanking", payload, ttl=60)["result"]["data"]["rankings"]
+    return EndpointCall(endpoint_path="/round.getLastHits", payload=payload, cache_tll=60)
 
 
 def item_trading_get_prices(forced_request=False) -> dict[str, float]:
@@ -346,7 +368,7 @@ def item_trading_get_prices(forced_request=False) -> dict[str, float]:
     return send_request("/itemTrading.getPrices", ttl=60)["result"]["data"]
 
 
-def trading_order_get_top_orders(item_code: str, limit:int = 10) -> tuple[dict, dict]:
+def trading_order_get_top_orders(item_code: str, limit:int = 10) -> EndpointCall:
     """Retrieves the best orders for an item
     :param limit: Minimum 1, maximum 100. Default 10
     :return: Tuple(buy orders, sell orders)
@@ -356,32 +378,31 @@ def trading_order_get_top_orders(item_code: str, limit:int = 10) -> tuple[dict, 
         "itemCode": item_code,
         "limit": limit
     })
-    respond = send_request("/tradingOrder.getTopOrders", payload, ttl=5)["result"]["data"]
-    return respond["buyOrders"], respond["sellOrders"]
+    return EndpointCall(endpoint_path="/tradingOrder.getTopOrders", payload=payload, cache_tll=5)
 
 
-def item_offer_get_by_id(item_offer_id: str) -> dict:
+def item_offer_get_by_id(item_offer_id: str) -> EndpointCall:
     """Retrieves detailed information about a specific item offer"""
     payload = {
         "itemOfferId": item_offer_id
     }
-    return send_request("/tradingOrder.getTopOrders", payload, ttl=5)["result"]["data"]
+    return EndpointCall(endpoint_path="/tradingOrder.getTopOrders", payload=payload, cache_tll=5)
 
 
-def work_offer_get_by_id(work_offer_id: str) -> dict:
+def work_offer_get_by_id(work_offer_id: str) -> EndpointCall:
     """Retrieves detailed information about a specific work offer"""
     payload = {
         "workOfferId": work_offer_id
     }
-    return send_request("/workOffer.getById", payload, ttl=600)["result"]["data"]
+    return EndpointCall(endpoint_path="/workOffer.getById", payload=payload)
 
 
-def work_offer_get_work_offer_by_company_id(company_id: str) -> dict:
+def work_offer_get_work_offer_by_company_id(company_id: str) -> EndpointCall:
     """Retrieves work offer for a specific company"""
     payload = {
         "companyId": company_id
     }
-    return send_request("/workOffer.getWorkOfferByCompanyId", payload, ttl=600)["result"]["data"]
+    return EndpointCall(endpoint_path="/workOffer.getWorkOfferByCompanyId", payload=payload)
 
 
 def work_offer_get_work_offers_paginated(user_id: str = None, region_id: str = None, cursor: str = None, energy: int = 0, production: int = 0, limit: int = 10):
@@ -396,48 +417,49 @@ def work_offer_get_work_offers_paginated(user_id: str = None, region_id: str = N
         "cursor": cursor,
         "limit": limit
     })
-    respond = send_request("/workOffer.getWorkOffersPaginated", payload, ttl=60)["result"]["data"]
-    return respond["items"], respond.setdefault("nextCursor", None)
+    return EndpointCall(endpoint_path="/workOffer.getWorkOffersPaginated",
+                        payload=payload,
+                        cache_tll=60,
+                        response_type=ResponseType.PAGINATED_LIST)
 
 
-def ranking_get_rankings(ranking_type: Literal["weeklyCountryDamages","weeklyCountryDamagesPerCitizen","countryRegionDiff","countryDevelopment","countryActivePopulation","countryDamages","countryWealth","countryProductionBonus","weeklyUserDamages","userDamages","userWealth","userLevel","userReferrals","userSubscribers","userTerrain","userPremiumMonths","userPremiumGifts","muWeeklyDamages","muDamages","muTerrain","muWealth"]) -> dict:
+def ranking_get_ranking(ranking_type: Literal["weeklyCountryDamages","weeklyCountryDamagesPerCitizen","countryRegionDiff","countryDevelopment","countryActivePopulation","countryDamages","countryWealth","countryProductionBonus","weeklyUserDamages","userDamages","userWealth","userLevel","userReferrals","userSubscribers","userTerrain","userPremiumMonths","userPremiumGifts","muWeeklyDamages","muDamages","muTerrain","muWealth"]) -> EndpointCall:
     """Retrieves ranking data for the specified ranking type and optional year-week filter"""
     payload = {
         "rankingType": ranking_type
     }
-    return send_request("/ranking.getRanking", payload, ttl=1200)["result"]["data"]
+    return EndpointCall(endpoint_path="/ranking.getRanking", payload=payload, cache_tll=1200)
 
 
-def search_anything(search_text: str) -> dict:
+def search_anything(search_text: str) -> EndpointCall:
     """Performs a global search across users, companies, articles, and other entities"""
     payload = {
         "searchText": search_text
     }
-    return send_request("/search.searchText", payload, ttl=600)["result"]["data"]
+    return EndpointCall(endpoint_path="/search.searchAnything", payload=payload)
 
 
-def game_config_get_dates(forced_request=False) -> dict:
+def game_config_get_dates(forced_request=False) -> EndpointCall:
     """Retrieves game-related dates and timings"""
-    return send_request("/gameConfig.getDates", ttl=3600)["result"]["data"]
+    return EndpointCall(endpoint_path="/gameConfig.getDates", cache_tll=3600)
 
 
-def game_config_get_game_config(forced_request=False) -> dict:
+def game_config_get_game_config(forced_request=False) -> EndpointCall:
     """Retrieves static game configuration"""
-    return send_request("/gameConfig.getGameConfig", ttl=86400)["result"]["data"]
+    return EndpointCall(endpoint_path="/gameConfig.getGameConfig", cache_tll=86400)
 
 
-def user_get_user_lite(user_id: str, batched=False) -> dict | BatchedEndpoint:
+def user_get_user_lite(user_id: str) -> EndpointCall:
     """Retrieves basic public information about a user including username, skills, and rankings"""
     payload = {
         "userId": user_id
     }
-    if batched:
-        return BatchedEndpoint("/user.getUserLite", payload, cache_ttl=600)
-    return send_request("/user.getUserLite", payload, ttl=600)["result"]["data"]
+    return EndpointCall(endpoint_path="/user.getUserLite",
+                        payload=payload,
+                        response_type=ResponseType.PAGINATED_LIST)
 
 
-
-def user_get_users_by_country(country_id: str, limit: int = 10, cursor: str = None) -> tuple[list, str | None]:
+def user_get_users_by_country(country_id: str, limit: int = 10, cursor: str = None) -> EndpointCall:
     """Retrieves a list of users by country
     :return: Tuple(list of items, next cursor in str or None if not available)"""
     limit = min(max(1, limit), 100)
@@ -446,19 +468,20 @@ def user_get_users_by_country(country_id: str, limit: int = 10, cursor: str = No
         "limit": limit,
         "cursor": cursor
     })
-    respond: dict = send_request("/user.getUsersByCountry", payload, ttl=600)["result"]["data"]
-    return respond["items"], respond.setdefault("nextCursor", None)
+    return EndpointCall(endpoint_path="/user.getUsersByCountry",
+                        payload=payload,
+                        response_type=ResponseType.PAGINATED_LIST)
 
 
-def article_get_article_by_id(article_id: str) -> dict:
+def article_get_article_by_id(article_id: str) -> EndpointCall:
     """Retrieves detailed information about a specific article"""
     payload = {
         "articleId": article_id
     }
-    return send_request("/article.getArticleById", payload, ttl=3600)["result"]["data"]
+    return EndpointCall(endpoint_path="/article.getArticleById", payload=payload, cache_tll=3600)
 
 
-def article_get_articles_paginated(type: Literal["weekly", "top", "my", "subscriptions", "last"], limit: int = 10, cursor: str = None, user_id: str = None, categories: list[str] = None, languages: list[str] = None) -> tuple[dict, str | None]:
+def article_get_articles_paginated(type: Literal["weekly", "top", "my", "subscriptions", "last"], limit: int = 10, cursor: str = None, user_id: str = None, categories: list[str] = None, languages: list[str] = None) -> EndpointCall:
     """Retrieves a paginated list of articles"""
     limit = min(max(1, limit), 100)
     payload = clean({
@@ -469,19 +492,21 @@ def article_get_articles_paginated(type: Literal["weekly", "top", "my", "subscri
         "categories": categories,
         "languages": languages
     })
-    respond = send_request("/article.getArticlesPaginated", payload, ttl=3600)["result"]["data"]
-    return respond["items"], respond.setdefault("nextCursor", None)
+    return EndpointCall(endpoint_path="/article.getArticlesPaginated",
+                        payload=payload,
+                        cache_tll=3600,
+                        response_type=ResponseType.PAGINATED_LIST)
 
 
-def mu_get_by_id(mu_id: str) -> dict:
+def mu_get_by_id(mu_id: str) -> EndpointCall:
     """Retrieves detailed information about a specific military unit"""
     payload = clean({
         "muId": mu_id,
     })
-    return send_request("/mu.getById", payload, ttl=600)["result"]["data"]
+    return EndpointCall(endpoint_path="/mu.getById", payload=payload)
 
 
-def mu_get_many_paginated(limit: int = 20, cursor: str = None, user_id: str = None, member_id: str = None, org_id: str = None, search: str = None) -> tuple[dict, str | None]:
+def mu_get_many_paginated(limit: int = 20, cursor: str = None, user_id: str = None, member_id: str = None, org_id: str = None, search: str = None) -> EndpointCall:
     """Retrieves a paginated list of military units with optional filters"""
     limit = min(max(1, limit), 100)
     payload = clean({
@@ -492,11 +517,12 @@ def mu_get_many_paginated(limit: int = 20, cursor: str = None, user_id: str = No
       "orgId": org_id,
       "search": search
     })
-    respond = send_request("/mu.getManyPaginated", payload, ttl=600)["result"]["data"]
-    return respond["items"], respond.setdefault("nextCursor", None)
+    return EndpointCall(endpoint_path="/mu.getManyPaginated",
+                        payload=payload,
+                        response_type=ResponseType.PAGINATED_LIST)
 
 
-def transaction_get_paginated_transactions(limit: int = 10, cursor: str = None, user_id: str = None, mu_id: str = None, country_id: str = None, item_code: str = None, transaction_type: str = None) -> tuple[list, str | None]:
+def transaction_get_paginated_transactions(limit: int = 10, cursor: str = None, user_id: str = None, mu_id: str = None, country_id: str = None, item_code: str = None, transaction_type: str = None) -> EndpointCall:
     """Retrieves a paginated list of transactions"""
     limit = min(max(1, limit), 100)
     payload = clean({
@@ -508,11 +534,13 @@ def transaction_get_paginated_transactions(limit: int = 10, cursor: str = None, 
         "itemCode": item_code,
         "transactionType": transaction_type
     })
-    respond = send_request("/transaction.getPaginatedTransactions", payload, ttl=60)["result"]["data"]
-    return respond["items"], respond.setdefault("nextCursor", None)
+    return EndpointCall(endpoint_path="/transaction.getPaginatedTransactions",
+                        payload=payload,
+                        cache_tll=60,
+                        response_type=ResponseType.PAGINATED_LIST)
 
 
-def upgrade_get_upgrade_by_type_and_entity(upgrade_type: Literal["bunker", "base", "storage", "automatedEngine", "breakRoom", "headquarters", "dormitories"], region_id: str = None, company_id: str = None, mu_id: str = None) -> dict:
+def upgrade_get_upgrade_by_type_and_entity(upgrade_type: Literal["bunker", "base", "storage", "automatedEngine", "breakRoom", "headquarters", "dormitories"], region_id: str = None, company_id: str = None, mu_id: str = None) -> EndpointCall:
     """Retrieves upgrade information for a specific upgrade type and entity (region, company, or military unit)"""
     payload = clean({
         "upgradeType": upgrade_type,
@@ -520,10 +548,10 @@ def upgrade_get_upgrade_by_type_and_entity(upgrade_type: Literal["bunker", "base
         "companyId": company_id,
         "muId": mu_id
     })
-    return send_request("/upgrade.getUpgradeByTypeAndEntity", payload, ttl=600)["result"]["data"]
+    return EndpointCall(endpoint_path="/upgrade.getUpgradeByTypeAndEntity", payload=payload)
 
 
-def worker_get_workers(user_id: str = None, company_id: str = None) -> dict:
+def worker_get_workers(user_id: str = None, company_id: str = None) -> EndpointCall:
     """Get workers for a company or user"""
     if user_id is None and company_id is None:
         raise WarEraApiException("No parameters were specified in worker_get_workers()")
@@ -531,12 +559,12 @@ def worker_get_workers(user_id: str = None, company_id: str = None) -> dict:
         "userId": user_id,
         "companyId": company_id
     })
-    return send_request("/worker.getWorkers", payload, ttl=600)["result"]["data"]
+    return EndpointCall(endpoint_path="/worker.getWorkers", payload=payload)
 
 
-def worker_get_total_workers_count(user_id: str) -> dict:
+def worker_get_total_workers_count(user_id: str) -> EndpointCall:
     """Get total workers count for a user"""
     payload = clean({
         "userId": user_id
     })
-    return send_request("/worker.getTotalWorkersCount", payload, ttl=600)["result"]["data"]
+    return EndpointCall(endpoint_path="/worker.getTotalWorkersCount", payload=payload)
