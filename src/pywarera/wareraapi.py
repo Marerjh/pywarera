@@ -22,7 +22,6 @@ BATCH_LIMIT = 100
 
 logger = logging.getLogger(__name__)
 
-
 class ResponseType(Enum):
     PAGINATED_LIST = "paginated_list"
     REGULAR = "regular"
@@ -36,7 +35,6 @@ class EndpointCall:
         self.response_type: ResponseType = response_type
 
     def execute(self) -> dict | tuple[dict, str | None]:
-        print(send_request(endpoint=self.endpoint_path, data=self.payload, ttl=self.cache_ttl))
         response = send_request(endpoint=self.endpoint_path, data=self.payload, ttl=self.cache_ttl)["result"].get("data")
         if self.response_type == ResponseType.REGULAR:
             return response
@@ -98,7 +96,6 @@ class WarEraApiException(Exception):
 def update_api_token(new_api_token):
     global API_TOKEN
     API_TOKEN = new_api_token
-
 
 def send_request(endpoint, data=None, ttl=0) -> dict | list:
     s.cache.delete(expired=True)  # clearing of expired cache every time request is being prepared
@@ -195,7 +192,7 @@ def clean(dictionary: dict) -> dict:  # This method was made with ChatGPT :( Sha
     return {k: v for k, v in dictionary.items() if v not in (None, "")}
 
 
-def company_get_by_id(company_id: str, batched: bool = False) -> EndpointCall:
+def company_get_by_id(company_id: str) -> EndpointCall:
     """Retrieves detailed information about a specific company"""
     payload = {
         "companyId": company_id
@@ -362,10 +359,10 @@ def battle_ranking_get_ranking(data_type: Literal["damage", "points", "money"],
     return EndpointCall(endpoint_path="/round.getLastHits", payload=payload, cache_tll=60)
 
 
-def item_trading_get_prices(forced_request=False) -> dict[str, float]:
+def item_trading_get_prices(forced_request=False) -> EndpointCall:
     """Retrieves current market prices for all tradeable items
     :return: Dict{id of resource: average price of resource}"""
-    return send_request("/itemTrading.getPrices", ttl=60)["result"]["data"]
+    return EndpointCall(endpoint_path="/itemTrading.getPrices", cache_tll=60)
 
 
 def trading_order_get_top_orders(item_code: str, limit:int = 10) -> EndpointCall:

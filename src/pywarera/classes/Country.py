@@ -25,3 +25,11 @@ class Country:
         self.discord_url: str | None = data.get("discordUrl")
         self.specialized_item: str | None = data.get("specializedItem")
         self.enemy: str | None = data.get("enemy")
+
+    @property
+    def production_bonus(self):
+        return self.production_percent / 100
+
+    @property
+    def development_bonus(self):
+        return self.development_percent / 100

@@ -1,4 +1,5 @@
 from .. import core as pywarera
+from . import Country
 
 class Region:
     def __init__(self, data):
@@ -17,5 +18,18 @@ class Region:
         self.resistance: str = data.get("resistance")
         self.deposit: dict = data.get("deposit", {})
 
-    def get_country(self):
+    def get_country(self) -> Country:
         return pywarera.get_country(self.country)
+
+    @property
+    def deposit_type(self) -> str | None:
+        if self.deposit:
+            return self.deposit.get("type")
+        return None
+
+
+    @property
+    def deposit_production_bonus(self) -> float:
+        if self.deposit:
+            return self.deposit.get("bonusPercent", 0) / 100
+        return 0

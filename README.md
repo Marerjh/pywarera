@@ -1,6 +1,6 @@
 **This package is EXPERIMENTAL, NOT stable and  NOT intended for use in anything other than your own private projects.**
 
-**pywarera** is a Python wrapper for the WarEra API. 
+**pywarera** is a simple Python wrapper for the WarEra API. 
 It provides high-level classes for working with game models and a low-level `wareraapi` module for making raw API requests.
 
 API documentation is available at https://api2.warera.io/docs/.
@@ -8,10 +8,11 @@ API documentation is available at https://api2.warera.io/docs/.
 License: GNU General Public License v3.0
 
 ## Features
-- high-level classes for working with API models
+- high-level classes to work with API models
 - ability to manually send API requests
-- caching
+- caching (x2 - x5 less requests!)
 - batching
+- delays
 
 ## Supported models
 - 🟢 the wrapper can reliably reproduce this model from the get request
@@ -23,7 +24,7 @@ License: GNU General Public License v3.0
 - 🟡country
 - 🔴event
 - 🟡government
-- 🔴region
+- 🟡region
 - 🔴battle
 - 🔴round
 - 🔴battleRanking
@@ -35,7 +36,7 @@ License: GNU General Public License v3.0
 - 🔴gameConfig
 - 🟡user
 - 🔴article
-- 🔴mu
+- 🟡mu
 - 🔴transaction
 - 🔴upgrade
 
@@ -49,7 +50,8 @@ pip install pywarera
 ## Examples
 ```python
 import pywarera
-import random
+
+pywarera.update_api_token("<YOUR_API_TOKEN>")
 
 # Returns country id
 country_id = pywarera.get_country_id_by_name("Ukraine")
@@ -65,6 +67,8 @@ if is_there_a_president:
     print(president_id)
 
 # Let's check the wealth of a random citizen
+import random
+
 romania_citizens = pywarera.get_country_citizens_by_name("Romania")
 random_citizen = random.choice(romania_citizens)
 print(random_citizen.wealth)
@@ -74,11 +78,17 @@ print(random_citizen.wealth)
 ```python
 from pywarera import wareraapi
 
+wareraapi.update_api_token("<YOUR_API_TOKEN>")
+
 # Regular request, will be cached
-user_response = wareraapi.user_get_user_lite(user_id="123456")
+user_response = wareraapi.user_get_user_lite(user_id="123456").execute()
 
 # Batched request, will be cached
-wareraapi.user_get_user_lite(user_id="123456", do_batch=True)
-wareraapi.user_get_user_lite(user_id="7891011", do_batch=True)
-response = wareraapi.send_batch()
+from pywarera.wareraapi import BatchSession
+
+with BatchSession() as batch:
+    batch.add(wareraapi.user_get_user_lite(user_id="123456"))
+    batch.add(wareraapi.user_get_user_lite(user_id="7891011"))
+
+print(batch.responses)
 ```
