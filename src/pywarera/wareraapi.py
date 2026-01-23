@@ -11,16 +11,17 @@ import time
 from typing import Literal
 
 # Clearing of expired cache
-s = CachedSession(use_temp=True, ignored_parameters=["X-API-KEY"])
+s = CachedSession("wareraapi_cache", use_temp=True, ignored_parameters=["X-API-KEY"])
 s.cache.delete(expired=True)
 
 API_TOKEN = ""
 
 DELAY_SECONDS = 0.25
-BATCH_DELAY = 5
+BATCH_DELAY = 1
 BATCH_LIMIT = 100
 
 logger = logging.getLogger(__name__)
+
 
 class ResponseType(Enum):
     PAGINATED_LIST = "paginated_list"
@@ -97,6 +98,7 @@ def update_api_token(new_api_token):
     global API_TOKEN
     API_TOKEN = new_api_token
 
+
 def send_request(endpoint, data=None, ttl=0) -> dict | list:
     s.cache.delete(expired=True)  # clearing of expired cache every time request is being prepared
     url = f"https://api2.warera.io/trpc{endpoint}"
@@ -165,7 +167,7 @@ def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int):
         params={"input": json.dumps(params)} if params else None
     )
     # If already cached and not expired then do nothing
-    if s.cache.contains(request=fake_req) and not s.cache.get_response(key=s.cache.create_key(request=fake_req)).is_expired:
+    if s.cache.contains(request=fake_req):
         logger.info("Tried to create a manual cache from batch, but data is already cached. Terminated")
         return False
 

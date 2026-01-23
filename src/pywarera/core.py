@@ -15,8 +15,10 @@ countries = dict()
 def clear_cache():
     wareraapi.s.cache.clear()
 
+
 def update_api_token(new_api_token):
     wareraapi.update_api_token(new_api_token)
+
 
 def get_user_wage(user_id, cursor=None):
     wage = 0
@@ -62,6 +64,7 @@ def get_all_countries(return_list: bool = False) -> list[Country] | dict[str, Co
         return [Country(i) for i in wareraapi.country_get_all_countries().execute()]
     return {i["_id"]: Country(i) for i in wareraapi.country_get_all_countries().execute()}
 
+
 def get_country_id_by_name(country_name: str) -> str:
     global countries
     if countries:
@@ -81,12 +84,15 @@ def get_all_country_citizens_id(country_id: str) -> list[str]:
         to_return.extend([item["_id"] for item in items])
     return to_return
 
+
 def get_all_country_citizens(country_id: str) -> list[User]:
     ids = get_all_country_citizens_id(country_id)
     return get_users(ids)
 
+
 def get_country_citizens_ids_by_name(country_name: str):
     return get_all_country_citizens_id(get_country_id_by_name(country_name))
+
 
 def get_country_citizens_by_name(country_name: str):
     ids = get_country_citizens_ids_by_name(country_name)
@@ -150,7 +156,6 @@ def get_users_in_battle_id(battle_id: str, subject: Literal["user", "mu", "count
     items_attackers = set([i[subject] for i in [k for k in items_attackers]] if type(items_attackers) == list else [i[subject] for i in items_attackers])
     items_defenders = set([i[subject] for i in [k for k in items_defenders]] if type(items_defenders) == list else [i[subject] for i in items_defenders])
     return items_attackers, items_defenders
-
 
 
 def get_damage_in_battles(battle_id: str | list, side: Literal["attacker", "defender"]):
