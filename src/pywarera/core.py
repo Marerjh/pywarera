@@ -1,3 +1,5 @@
+import logging
+
 from . import wareraapi
 from .classes.User import User
 from .classes.Country import Country
@@ -10,6 +12,8 @@ from .wareraapi import BatchSession
 from typing import Literal
 
 countries = dict()
+
+logger = logging.getLogger(__name__)
 
 
 def clear_cache():
@@ -76,7 +80,7 @@ def get_country_id_by_name(country_name: str) -> str:
         return get_country_id_by_name(country_name)
 
 
-def get_all_country_citizens_id(country_id: str) -> list[str]:
+def get_country_citizens_ids(country_id: str) -> list[str]:
     to_return = []
     cursor = ""
     while cursor is not None:
@@ -85,58 +89,62 @@ def get_all_country_citizens_id(country_id: str) -> list[str]:
     return to_return
 
 
-def get_all_country_citizens(country_id: str) -> list[User]:
-    ids = get_all_country_citizens_id(country_id)
+def get_country_citizens(country_id: str) -> list[User]:
+    ids = get_country_citizens_ids(country_id)
     return get_users(ids)
 
 
-def get_country_citizens_ids_by_name(country_name: str):
-    return get_all_country_citizens_id(get_country_id_by_name(country_name))
+def get_country_citizen_ids_by_name(country_name: str) -> list[str]:
+    return get_country_citizens_ids(get_country_id_by_name(country_name))
 
 
-def get_country_citizens_by_name(country_name: str):
-    ids = get_country_citizens_ids_by_name(country_name)
+def get_country_citizens_by_name(country_name: str) -> list[User]:
+    ids = get_country_citizen_ids_by_name(country_name)
     return get_users(ids)
 
 
-def get_companies_ids_of_player(user_id: str) -> list[str]:
+def get_user_company_ids(user_id: str) -> list[str]:
+    return wareraapi.company_get_companies(user_id, per_page=15).execute()[0]  # 15 just to be sure that exceeding companies will be inclided
+
+
+def get_users_company_ids(user_ids: list[str]) -> list[str]:
     to_return = []
-    cursor = ""
-    while cursor is not None:
-        items, cursor = wareraapi.company_get_companies(user_id, per_page=12, cursor=cursor).execute()
-        to_return.extend([item for item in items])
-    return to_return
-
-
-def get_all_companies_ids_of_country_citizens(country_id: str) -> list[str]:
-    to_return = []
-    for i in get_all_country_citizens_id(country_id):
-        to_return.extend(get_companies_ids_of_player(i))
-    return to_return
-
-
-def get_all_companies_of_player(user_id: str) -> list[Company]:
-    to_return = []
-    companies_ids = get_companies_ids_of_player(user_id)
     with BatchSession() as batch:
-        for company_id in companies_ids:
-            batch.add(wareraapi.company_get_by_id(company_id))
+        for user_id in user_ids:
+            batch.add(wareraapi.company_get_companies(user_id, per_page=15)) # 15 just to be sure that exceeding companies will be inclided
     for response in batch.responses:
-        to_return.append(Company(response["result"]["data"]))
+        try:
+            to_return.extend(response["result"]["data"]["items"])
+        except KeyError as e:
+            logger.warning("Got KeyError when working with get_companies_ids_of_players. Broken request?")
+            logger.warning(f"{e}")
+            pass
     return to_return
 
 
-def get_company_object(company_id: str | list) -> Company | list[Company]:
-    if type(company_id) is list:
-        to_return = []
-        with BatchSession() as batch:
-            for company_idd in company_id:
-                batch.add(wareraapi.company_get_by_id(company_idd))
-        for response in batch.responses:
-            to_return.append(Company(response["result"]["data"]))
-        return to_return
-    else:
-        return Company(wareraapi.company_get_by_id(company_id))
+def get_country_citizens_company_ids(country_id: str) -> list[str]:
+    return get_users_company_ids(get_country_citizens_ids(country_id))
+
+
+def get_company(company_id: str) -> Company:
+    return Company(wareraapi.company_get_by_id(company_id))
+
+
+def get_companies(company_ids: list[str]) -> list[Company]:
+    with BatchSession() as batch:
+        for company_id in company_ids:
+            batch.add(wareraapi.company_get_by_id(company_id))
+    return [Company(response["result"]["data"]) for response in batch.responses]
+
+
+def get_country_citizens_companies(country_id: str) -> list[Company]:
+    company_ids = get_country_citizens_company_ids(country_id)
+    return get_companies(company_ids)
+
+
+def get_user_companies(user_id: str) -> list[Company]:
+    company_ids = get_user_company_ids(user_id)
+    return get_companies(company_ids)
 
 
 def get_military_unit(mu_id: str) -> MilitaryUnit:

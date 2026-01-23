@@ -15,10 +15,16 @@ class Company:
         self.created_at = data["createdAt"]
         self.updated_at = data["updatedAt"]
         self.v = data["__v"]
-        self.estimated_value: float = data["estimatedValue"]
+        self.estimated_value: float = data.get("estimatedValue", 0)
         self.last_hires_at = data["dates"]["lastHiresAt"] if data.get("dates", False) else []
         self.moved_up_at = data["movedUpAt"] if data.get("movedUpAt", False) else None
         self.worker_count: int = data.get("workerCount", 0)
+        self.disabled_at = data.get("disabledAt")
 
     def get_upgrades(self) -> dict[Literal["automated_engine", "break_room"], int]:
         return {"automated_engine": self.automated_engine, "break_room": self.break_room}
+
+    @property
+    def disabled(self):
+        return True if self.disabled_at is not None else False
+    

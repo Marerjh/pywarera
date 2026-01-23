@@ -17,7 +17,7 @@ s.cache.delete(expired=True)
 API_TOKEN = ""
 
 DELAY_SECONDS = 0.25
-BATCH_DELAY = 1
+BATCH_DELAY = 0.25
 BATCH_LIMIT = 100
 
 logger = logging.getLogger(__name__)
