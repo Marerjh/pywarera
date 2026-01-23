@@ -1,4 +1,4 @@
-from ItemsConfig import ItemsConfig
+from .ItemsConfig import ItemsConfig
 
 class GameConfig:
     def __init__(self, data):
@@ -14,7 +14,7 @@ class GameConfig:
         self.badge = None
         self.merging_cost = None
         self.upgrades_config = None
-        self.items = data.get("items")
+        self.items = ItemsConfig(data.get("items")) if data.get("items") else None
         self.referral = None
         self.region = None
         self.newspaper = None

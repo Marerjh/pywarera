@@ -8,6 +8,8 @@ from .classes.Government import Government
 from .classes.MilitaryUnit import MilitaryUnit
 from .classes.ItemPrices import ItemPrices
 from .classes.Region import Region
+from .classes.GameConfig import GameConfig
+from .classes.Item import Item
 from .wareraapi import BatchSession
 from typing import Literal
 
@@ -24,6 +26,14 @@ def update_api_token(new_api_token):
     wareraapi.update_api_token(new_api_token)
 
 
+def get_items():
+    return GameConfig(wareraapi.game_config_get_game_config().execute()).items
+
+
+def get_item(item_code: str) -> Item:
+    return get_items().get_item_by_code(item_code)
+
+
 def get_user_wage(user_id, cursor=None):
     wage = 0
     wage_transactions = wareraapi.transaction_get_paginated_transactions(limit=20, user_id=user_id, transaction_type="wage", cursor=cursor).execute()
@@ -38,6 +48,10 @@ def get_user_wage(user_id, cursor=None):
 
 def get_trading_prices() -> ItemPrices:
     return ItemPrices(wareraapi.item_trading_get_prices().execute())
+
+
+def get_item_price(item_code: str) -> float:
+    return get_trading_prices().get_price_by_code(item_code)
 
 
 def get_region(region_id: str) -> Region:
