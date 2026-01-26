@@ -92,3 +92,42 @@ with BatchSession() as batch:
 
 print(batch.responses)
 ```
+## Functions
+### General
+- clear_cache()
+- update_api_token(new_api_token)
+
+### Items
+- get_items() -> access to resources and products
+- get_item(item_code)
+- get_trading_prices()
+- get_item_price(item_code)
+
+### User
+- get_user(user_id) -> returns instance of User class
+- get_users(user_ids) -> returns list with instances of User class
+- get_user_wage(user_id)
+
+### Government
+- get_government(country_id) -> returns instance of Government clas
+
+### Country
+- get_country(country_id) -> returns instance of Country class
+- get_all_countries(return_list: bool) -> returns dict with instances of Country object, where key is country's ID
+- get_country_id_by_name(country_name)
+- get_country_citizens_ids(country_id)
+- get_country_citizens(country_id) -> returns list with instances of User class
+- get_country_citizens_ids_by_name(country_name)
+- get_country_citizens_by_name(country_name) -> returns list with instances of User class
+
+### Company
+- get_user_company_ids(user_id)
+- get_users_company_ids(user_ids: list[str])
+- get_country_citizens_company_ids(country_id)
+- get_company(company_id) -> returns instance of Company class
+- get_companies(company_ids: list[str]) -> returns list with instances of Company class
+- get_country_citizens_companies(country_id) -> returns list with instances of Company class
+
+### MUs
+- get_military_unit(mu_id) -> returns instance of MilitaryUnit class
+- get_military_units_from_paginated(items: list) -> to work with mu.getManyPaginated request
