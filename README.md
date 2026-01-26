@@ -97,6 +97,9 @@ print(batch.responses)
 - clear_cache()
 - update_api_token(new_api_token)
 
+### Region
+- get_region(region_id) -> returns instance of Region class
+
 ### Items
 - get_items() -> access to resources and products
 - get_item(item_code)
