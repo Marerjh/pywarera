@@ -10,9 +10,11 @@ from .classes.ItemPrices import ItemPrices
 from .classes.Region import Region
 from .classes.GameConfig import GameConfig
 from .classes.Item import Item
+from .classes.WorkersPerCompany import WorkersPerCompany
 from .wareraapi import BatchSession
 from typing import Literal
 
+countries_id_to_names = dict()
 countries = dict()
 
 logger = logging.getLogger(__name__)
@@ -22,8 +24,17 @@ def clear_cache():
     wareraapi.s.cache.clear()
 
 
-def update_api_token(new_api_token):
+def update_api_token(new_api_token: str):
     wareraapi.update_api_token(new_api_token)
+    logger.warning("API token were updated")
+
+
+def get_workers_per_company(company_id: str) -> WorkersPerCompany:
+    return WorkersPerCompany(wareraapi.worker_get_workers(company_id=company_id).execute())
+
+
+def get_user_workers_per_company(user_id: str) -> WorkersPerCompany:
+    return WorkersPerCompany(wareraapi.worker_get_workers(user_id=user_id).execute())
 
 
 def get_items():
@@ -35,6 +46,7 @@ def get_item(item_code: str) -> Item:
 
 
 def get_user_wage(user_id, cursor=None):
+    logger.debug("User wage were requested, searching for wage transaction")
     wage = 0
     wage_transactions = wareraapi.transaction_get_paginated_transactions(limit=20, user_id=user_id, transaction_type="wage", cursor=cursor).execute()
     if len(wage_transactions[0]) > 0:
@@ -74,23 +86,28 @@ def get_government(country_id: str) -> Government:
 
 
 def get_country(country_id: str) -> Country:
-    return Country(wareraapi.country_get_country_by_id(country_id).execute())
+    global countries
+    if not countries:
+        get_all_countries()
+    return countries[country_id]
 
 
 def get_all_countries(return_list: bool = False) -> list[Country] | dict[str, Country]:
+    global countries
+    countries = {i["_id"]: Country(i) for i in wareraapi.country_get_all_countries().execute()}
     if return_list:
         return [Country(i) for i in wareraapi.country_get_all_countries().execute()]
-    return {i["_id"]: Country(i) for i in wareraapi.country_get_all_countries().execute()}
+    return countries
 
 
 def get_country_id_by_name(country_name: str) -> str:
-    global countries
-    if countries:
-        for key, value in countries.items():
+    global countries_id_to_names
+    if countries_id_to_names:
+        for key, value in countries_id_to_names.items():
             if value[0] == country_name:
                 return key
     else:
-        countries = {i.id: (i.name, i.code) for i in get_all_countries(return_list=True)}
+        countries_id_to_names = {i.id: (i.name, i.code) for i in get_all_countries(return_list=True)}
         return get_country_id_by_name(country_name)
 
 

@@ -1,18 +1,23 @@
 import math
 import logging
 from enum import Enum
+import line_profiler
+from line_profiler import profile
 
-import requests
-from requests_cache import CachedSession
-from requests import RequestException, PreparedRequest, Response
+import requests_cache
+from requests_cache import CachedSession, OriginalResponse, CachedResponse
+from requests import RequestException, Request, Response
 import datetime
 import json
 import time
 from typing import Literal
 
+logger = logging.getLogger(__name__)
+
 # Clearing of expired cache
 s = CachedSession("wareraapi_cache", use_temp=True, ignored_parameters=["X-API-KEY"])
 s.cache.delete(expired=True)
+logger.info("Expired cache entries were deleted")
 
 API_TOKEN = ""
 
@@ -20,7 +25,7 @@ DELAY_SECONDS = 0.25
 BATCH_DELAY = 0.25
 BATCH_LIMIT = 100
 
-logger = logging.getLogger(__name__)
+_already_cached = 0
 
 
 class ResponseType(Enum):
@@ -36,11 +41,12 @@ class EndpointCall:
         self.response_type: ResponseType = response_type
 
     def execute(self) -> dict | tuple[dict, str | None]:
-        response = send_request(endpoint=self.endpoint_path, data=self.payload, ttl=self.cache_ttl)["result"].get("data")
+        response = send_request(endpoint=self.endpoint_path, data=self.payload, ttl=self.cache_ttl)
+        data = response.json().get("result", {}).get("data")
         if self.response_type == ResponseType.REGULAR:
-            return response
+            return data
         elif self.response_type == ResponseType.PAGINATED_LIST:
-            return response.get("items"), response.get("nextCursor")
+            return data.get("items"), data.get("nextCursor")
 
 
 class BatchSession:
@@ -62,33 +68,45 @@ class BatchSession:
         self.batched_endpoints.append((batched_endpoint.endpoint_path, batched_endpoint.cache_ttl))
         self.batched_payload.append(batched_endpoint.payload)
 
-    def send_batch(self, ttl=600):
-        """This method splits and sends batched requests, as well as returns and caches batched responses"""
+    def _prepare_batch(self, ttl=600):
+        logger.debug("Preparing BATCH request")
         batch_limit = BATCH_LIMIT or 9999
         cycle, max_cycle = 0, math.ceil(len(self.batched_endpoints) / batch_limit)  # How much batches to prepare
-        responses = []
+        data = []
         while cycle < max_cycle:
+            cycle += 1
             # /endpoints,endpoint,endpoint?batch=1?input=<payload>
             endpoints_str = "/" + ",".join(
-                ep[1:] for ep, _ in self.batched_endpoints[cycle * batch_limit:(cycle + 1) * batch_limit])
+                ep[1:] for ep, _ in self.batched_endpoints[(cycle - 1) * batch_limit:cycle * batch_limit])
             # Input of endpoints
             input_payload = {str(i): p for i, p in
-                             enumerate(self.batched_payload[cycle * batch_limit:(cycle + 1) * batch_limit])}
-            responses.extend(send_request(f"{endpoints_str}?batch=1", data=input_payload, ttl=ttl))
-            if not cycle + 1 == max_cycle:
-                cycle += 1
-                time.sleep(BATCH_DELAY)
-                continue
-            break
+                             enumerate(self.batched_payload[(cycle - 1) * batch_limit:cycle * batch_limit])}
+            responses: list[dict] = send_request(f"{endpoints_str}?batch=1", data=input_payload, ttl=ttl).json()
+            data.extend(responses)
+            time.sleep(BATCH_DELAY)
+        return data
+
+    def _cache_endpoints(self, responses):
+        global _already_cached
 
         # Here we cache every response from a batch in case something will be requested independently
+        logger.debug(f"Starting to cache batched endpoints independently")
+        _already_cached = 0
         for index, response in enumerate(responses):
             save_cache_manually(self.batched_endpoints[index][0], self.batched_payload[index], response,
                                 self.batched_endpoints[index][1])
+        logger.info("Finished endpoints caching. Endpoints: %s, were already cached: %s",
+                    len(self.batched_endpoints), _already_cached)
 
+
+    def send_batch(self, ttl=600):
+        """This method splits and sends batched requests, as well as returns and caches batched responses"""
+        responses = self._prepare_batch(ttl)
+        self._cache_endpoints(responses)
         self.batched_endpoints.clear()
         self.batched_payload.clear()
         return responses
+
 
 class WarEraApiException(Exception):
     pass
@@ -99,64 +117,58 @@ def update_api_token(new_api_token):
     API_TOKEN = new_api_token
 
 
-def send_request(endpoint, data=None, ttl=0) -> dict | list:
-    s.cache.delete(expired=True)  # clearing of expired cache every time request is being prepared
+def send_request(endpoint, data=None, ttl=0) -> OriginalResponse | CachedResponse:
     url = f"https://api2.warera.io/trpc{endpoint}"
     params = {"input": json.dumps(data)} if data else None
-    logger.info(f"Creating request: {url} with params {params}")
-    cached_response = s.cache.get_response(
-        s.cache.create_key(requests.Request(
+    request = requests_cache.Request(
             method="GET",
             url=url,
-            params=params,
-            headers={
-                "X-API-Key":API_TOKEN,
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
-                "Accept": "application/json"
-            }
-        ).prepare()), False)
-    if cached_response:
-        logger.info(f"Found request in cache, no request created")
-        return cached_response.json()
-    time.sleep(DELAY_SECONDS)
-    try:
-        r = s.get(
-            url=url,
-            expire_after=ttl,
             params=params,
             headers={
                 "X-API-Key": API_TOKEN,
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
                 "Accept": "application/json"
             }
-        )
-    except RequestException as e:
-        logger.error("Request failed")
-        raise WarEraApiException("Request failed") from e
+        ).prepare()
+    cache_key = s.cache.create_key(request)
+    cached_response = s.cache.get_response(cache_key)
+    if cached_response and not cached_response.is_expired:
+        return cached_response
+    time.sleep(DELAY_SECONDS)
+
     try:
-        return_data = r.json()
-    except (ValueError, json.JSONDecodeError) as e:
-        logger.error("Bad JSON in response")
-        raise WarEraApiException("Bad JSON in response") from e
-    if 200 <= r.status_code <= 299:
-        logger.info("Success!")
-        return return_data
-    elif r.status_code == 429:
-        limits_reset = int(r.headers.get('Ratelimit-Reset', 60)) + 1
-        logger.warning(f"API returned 429: Too much requests. Retrying in: {limits_reset}")
-        time.sleep(limits_reset)
-        return send_request(endpoint, data, ttl)
-    elif r.status_code == 401 and return_data.get("error", {}).get("message", False) == "API token required":
-        logger.error(f"Please specify api-token with wareraapi.update_api_token(<YOUR_TOKEN>)")
-    logger.error(f"{r.status_code}: {r.reason}")
-    raise WarEraApiException(f"{r.status_code}: {r.reason}")
+        r = s.send(request, expire_after=ttl)
+        logger.debug("Request took %s ms.", round(r.elapsed.microseconds / 1000))
+    except RequestException as e:
+        logger.error("Request failed", e)
+        raise WarEraApiException("Request failed") from e
+
+    match r.status_code:
+        case code if 200 <= code <= 299:
+            logger.debug("Successful request, returning response")
+            return r
+        case 429:
+            limits_reset = int(r.headers.get('Ratelimit-Reset', 60)) + 1
+            logger.warning(f"API returned 429: Too much requests. Retrying in: {limits_reset}")
+            time.sleep(limits_reset)
+            return send_request(endpoint, data, ttl)
+        case 404:
+            logger.warning("Request returned 404. Probably wrong endpoint")
+            return None
+        case 401:
+            if r.json().get("error", {}).get("message", False) == "API token required":
+                logger.error(f"Please specify api-token with wareraapi.update_api_token(<YOUR_TOKEN>)")
+            raise WarEraApiException(f"{r.status_code}: {r.reason}")
+        case _:
+            logger.error(f"{r.status_code}: {r.reason}")
+            raise WarEraApiException(f"{r.status_code}: {r.reason}")
 
 
 def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int):
-    logger.info(f"Saving cache for endpoint {endpoint}, params {params}, ttl {ttl}")
+    global _already_cached
+
     # We need that fake response to search for it (or store it) in the cache via requests_cache module
-    fake_req = requests.PreparedRequest()
-    fake_req.prepare(
+    fake_req = requests_cache.Request(
         method="GET",
         url=f"https://api2.warera.io/trpc{endpoint}",
         headers={
@@ -164,12 +176,16 @@ def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
             "Accept": "application/json"
         },
-        params={"input": json.dumps(params)} if params else None
-    )
+        params={"input": json.dumps(params)} if params else None).prepare()
+
     # If already cached and not expired then do nothing
-    if s.cache.contains(request=fake_req):
-        logger.info("Tried to create a manual cache from batch, but data is already cached. Terminated")
-        return False
+    cache_key = s.cache.create_key(fake_req)
+    try:
+        if not s.cache.get_response(cache_key).is_expired:
+            _already_cached += 1
+            return False
+    except AttributeError:
+        pass
 
     fake_resp = Response()
     fake_resp.status_code = 200
@@ -186,8 +202,7 @@ def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int):
 
     expire_date = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=ttl)
 
-    s.cache.save_response(response=fake_resp, expires=expire_date)
-    logger.info("Succesfully created manual cache")
+    s.cache.save_response(response=fake_resp, cache_key=cache_key, expires=expire_date)
 
 
 def clean(dictionary: dict) -> dict:  # This method was made with ChatGPT :( Shame on me
@@ -455,7 +470,7 @@ def user_get_user_lite(user_id: str) -> EndpointCall:
     }
     return EndpointCall(endpoint_path="/user.getUserLite",
                         payload=payload,
-                        response_type=ResponseType.PAGINATED_LIST)
+                        response_type=ResponseType.REGULAR)
 
 
 def user_get_users_by_country(country_id: str, limit: int = 10, cursor: str = None) -> EndpointCall:
