@@ -81,14 +81,14 @@ from pywarera import wareraapi
 wareraapi.update_api_token("<YOUR_API_TOKEN>")
 
 # Regular request, will be cached
-user_response = wareraapi.user_get_user_lite(user_id="123456").execute()
+user_response = wareraapi.company_get_by_id(company_id="123456").execute()
 
 # Batched request, will be cached
 from pywarera.wareraapi import BatchSession
 
 with BatchSession() as batch:
-    batch.add(wareraapi.user_get_user_lite(user_id="123456"))
-    batch.add(wareraapi.user_get_user_lite(user_id="7891011"))
+    batch.add(wareraapi.company_get_by_id(company_id="123456"))
+    batch.add(wareraapi.company_get_by_id(company_id="7891011"))
 
 print(batch.responses)
 ```
