@@ -11,6 +11,7 @@ from .classes.Region import Region
 from .classes.GameConfig import GameConfig
 from .classes.Item import Item
 from .classes.WorkersPerCompany import WorkersPerCompany
+from .classes.RecommendedRegion import RecommendedRegion
 from .wareraapi import BatchSession
 from typing import Literal
 
@@ -28,6 +29,10 @@ def update_api_token(new_api_token: str):
     wareraapi.update_api_token(new_api_token)
     logger.warning("API token were updated")
 
+
+def get_company_recommended_regions(company_id: str, include_deposit: bool = True) -> list[RecommendedRegion]:
+    results = wareraapi.company_get_recommended_region_ids(company_id=company_id, include_deposit=include_deposit).execute()
+    return [RecommendedRegion(data) for data in results]
 
 def get_workers_per_company(company_id: str) -> WorkersPerCompany:
     return WorkersPerCompany(wareraapi.worker_get_workers(company_id=company_id).execute())
@@ -176,6 +181,27 @@ def get_country_citizens_companies(country_id: str) -> list[Company]:
 def get_user_companies(user_id: str) -> list[Company]:
     company_ids = get_user_company_ids(user_id)
     return get_companies(company_ids)
+
+
+def get_all_company_ids() -> list[str]:
+    #results = []
+    #users = []
+    #countriess = list(get_all_countries().keys())
+    #for i in countriess:
+    #    users.extend(get_country_citizens_ids(i))
+    #with BatchSession() as batch:
+    #    for i in users:
+    #        batch.add(wareraapi.company_get_companies(i, per_page=15))
+    #for i in batch.responses:
+    #    results.extend(i["result"]["data"]["items"])
+
+    results = []
+    cursor = ""
+    while cursor is not None:
+        result, next_cursor = wareraapi.company_get_companies(per_page=100, cursor=cursor).execute()
+        cursor = next_cursor
+        results.extend(result)
+    return results
 
 
 def get_military_unit(mu_id: str) -> MilitaryUnit:
