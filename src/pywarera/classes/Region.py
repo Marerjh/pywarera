@@ -18,9 +18,6 @@ class Region:
         self.resistance: str = data.get("resistance")
         self.deposit: dict = data.get("deposit", {})
 
-    def get_country(self) -> Country:
-        return pywarera.get_country(self.country)
-
     @property
     def deposit_type(self) -> str | None:
         if self.deposit:
