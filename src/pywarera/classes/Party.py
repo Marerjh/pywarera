@@ -1,0 +1,18 @@
+class Party:
+    def __init__(self, data: dict):
+        self.militarism: int = data.get("ethics").get("militarism")
+        self.isolationism: int = data.get("ethics").get("isolationism")
+        self.imperialism: int = data.get("ethics").get("imperialism")
+        self.industrialism: int = data.get("ethics").get("industrialism")
+        self.id: str = data.get("_id")
+        self.name: str = data.get("name")
+        self.description: str = data.get("description")
+        self.country: str = data.get("country")
+        self.region: str = data.get("region")
+        self.leader: str = data.get("leader")
+        self.council_members: list[str] = data.get("councilMembers")
+        self.members: list[str] = data.get("members")
+        self.created_at = data.get("createdAt")
+        self.updated_at = data.get("updatedAt")
+        self.avatar_url: str = data.get("avatarUrl")
+        self.treasurer: str = data.get("treasurer")

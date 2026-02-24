@@ -13,13 +13,6 @@ from typing import Literal, Callable
 
 logger = logging.getLogger(__name__)
 
-# Clearing of expired cache
-s = CachedSession("wareraapi_cache", use_temp=True, ignored_parameters=["X-API-KEY"])
-s.cache.delete(expired=True)
-logger.warning("Expired cache entries were deleted")
-
-API_TOKEN: str = ""
-
 RANKING_TYPES = Literal["weeklyCountryDamages", "weeklyCountryDamagesPerCitizen", "countryRegionDiff",
                         "countryDevelopment", "countryActivePopulation", "countryDamages", "countryWealth",
                         "countryProductionBonus", "weeklyUserDamages", "userDamages", "userWealth", "userLevel",
@@ -38,90 +31,6 @@ _already_cached: int = 0
 class ResponseType(Enum):
     PAGINATED_LIST = "paginated_list"
     REGULAR = "regular"
-
-
-class EndpointCall:
-    def __init__(self, endpoint_path: str, cache_tll: int = DEFAULT_CACHE_TTL, response_type: ResponseType = ResponseType.REGULAR, payload: dict = None, ):
-        self.endpoint_path: str = endpoint_path
-        self.payload: dict = payload
-        self.cache_ttl: int = cache_tll
-        self.response_type: ResponseType = response_type
-
-    def execute(self) -> dict | tuple[dict, (str | None)]:
-        """Executes request and returns data (or items)"""
-        response = send_request(endpoint=self.endpoint_path, data=self.payload, ttl=self.cache_ttl)
-        try:
-            data = response.json().get("result", {}).get("data")
-        except AttributeError as e:
-            logger.error("API responded with weird data | response = {}".format(self.endpoint_path, self.payload, response.text))
-            raise WarEraApiException("API responded with weird data | endpoint = {} | data = {} | response = {}".format(self.endpoint_path, self.payload, response.text)) from e
-        if self.response_type == ResponseType.REGULAR:
-            return data
-        elif self.response_type == ResponseType.PAGINATED_LIST:
-            return data.get("items"), data.get("nextCursor")
-
-
-class BatchSession:
-    def __init__(self, cache_ttl=DEFAULT_CACHE_TTL):
-        self.cache_ttl = cache_ttl
-        self.responses = None
-        self.batched_endpoints = []
-        self.batched_payload = []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is None:
-            self.responses = self.send_batch(self.cache_ttl)
-
-    def add(self, batched_endpoint: EndpointCall) -> None:
-        """This method adds instance of EndpointCall to batch, to be worked on later"""
-        # These two lists should always be synchronized
-        self.batched_endpoints.append((batched_endpoint.endpoint_path, batched_endpoint.cache_ttl))
-        self.batched_payload.append(batched_endpoint.payload)
-
-    def _prepare_batch(self, ttl: int = DEFAULT_CACHE_TTL) -> list[dict]:
-        """This method splits batches into pieces, makes them understandable by game server and sends requests
-
-        :return: list of responses from the server"""
-        logger.debug("Preparing BATCH request")
-        batch_limit = BATCH_LIMIT or 9999
-        cycle, max_cycle = 0, math.ceil(len(self.batched_endpoints) / batch_limit)  # How much batches to prepare
-        data = []
-        while cycle < max_cycle:
-            cycle += 1
-            # /endpoints,endpoint,endpoint?batch=1?input=<payload>
-            endpoints_str = "/" + ",".join(
-                ep[1:] for ep, _ in self.batched_endpoints[(cycle - 1) * batch_limit:cycle * batch_limit])
-            # Input of endpoints
-            input_payload = {str(i): p for i, p in
-                             enumerate(self.batched_payload[(cycle - 1) * batch_limit:cycle * batch_limit])}
-            responses: list[dict] = send_request(f"{endpoints_str}?batch=1", data=input_payload, ttl=ttl).json()
-            data.extend(responses)
-            time.sleep(BATCH_DELAY)
-        return data
-
-    def _cache_endpoints(self, responses: list[dict]) -> None:
-        """This method caches every batched endpoint"""
-        global _already_cached
-
-        # Here we cache every response from a batch in case something will be requested independently
-        logger.debug(f"Starting to cache batched endpoints independently")
-        _already_cached = 0
-        for index, response in enumerate(responses):
-            save_cache_manually(self.batched_endpoints[index][0], self.batched_payload[index], response,
-                                self.batched_endpoints[index][1])
-        logger.info("Finished endpoints caching. Endpoints: %s, were already cached: %s",
-                    len(self.batched_endpoints), _already_cached)
-
-    def send_batch(self, ttl: int = DEFAULT_CACHE_TTL) -> list[dict]:
-        """This method splits and sends batched requests, as well as returns and caches batched responses"""
-        responses = self._prepare_batch(ttl)
-        self._cache_endpoints(responses)
-        self.batched_endpoints.clear()
-        self.batched_payload.clear()
-        return responses
 
 
 class WarEraApiException(Exception):
@@ -166,141 +75,231 @@ class WarEraTooMuchRequests(WarEraApiException):
         self.retry_after = retry_after
 
 
-def update_api_token(new_api_token: str) -> None:
-    """Updates global API_TOKEN value"""
-    global API_TOKEN
-    if new_api_token and type(new_api_token) is str:
-        API_TOKEN = new_api_token
-        return
-    logger.error("Bad API_TOKEN were provided by user")
-    raise WarEraApiException("Bad API_TOKEN were provided by user")
+class WarEraApiSession:
+    def __init__(self, api_token: str = None):
+        self.api_token = api_token
+        self.session = CachedSession("wareraapi_cache", use_temp=True, ignored_parameters=["X-API-KEY"])
+        self.session.cache.delete(expired=True)
+        logger.warning("Expired cache entries were deleted")
+
+    def update_api_token(self, new_api_token: str) -> None:
+        """Updates global API_TOKEN value"""
+        if new_api_token and type(new_api_token) is str:
+            self.api_token = new_api_token
+            return
+        logger.error("Bad API_TOKEN were provided by user")
+        raise WarEraApiException("Bad API_TOKEN were provided by user")
 
 
-def send_request(endpoint: str, data: dict | None = None, ttl: int = 0, api_token: str = API_TOKEN) -> OriginalResponse | CachedResponse:
-    """Prepares request to game server, checks if it is cached and sends request if it is not"""
-    url = f"https://api2.warera.io/trpc{endpoint}"
-    params = {"input": json.dumps(data)} if data else None
-    request = requests_cache.Request(
-            method="GET",
-            url=url,
-            params=params,
-            headers={
-                "X-API-Key": api_token,
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
-                "Accept": "application/json"
-            }
-        ).prepare()
-    cache_key = s.cache.create_key(request)
-    cached_response = s.cache.get_response(cache_key)
-    if cached_response and not cached_response.is_expired:
-        return cached_response
-    time.sleep(DELAY_SECONDS)
+    def send_request(self, endpoint: str, data: dict | None = None, ttl: int = 0) -> OriginalResponse | CachedResponse:
+        """Prepares request to game server, checks if it is cached and sends request if it is not"""
+        url = f"https://api2.warera.io/trpc{endpoint}"
+        params = {"input": json.dumps(data)} if data else None
+        request = requests_cache.Request(
+                method="GET",
+                url=url,
+                params=params,
+                headers={
+                    "X-API-Key": self.api_token,
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+                    "Accept": "application/json"
+                }
+            ).prepare()
+        cache_key = self.session.cache.create_key(request)
+        cached_response = self.session.cache.get_response(cache_key)
+        if cached_response and not cached_response.is_expired:
+            return cached_response
+        time.sleep(DELAY_SECONDS)
 
-    try:
-        r = s.send(request, expire_after=ttl)
-        time_elapsed = r.elapsed.total_seconds() * 1000
-        if time_elapsed > 70:
-            logger.warning("Request took more than expected (%s ms. > 70 ms)", round(time_elapsed, 1))
-        logger.debug("Request took %s ms.", time_elapsed)
-    except RequestException as e:
-        logger.error("RequestException. Request failed, probably due to network error", e)
-        raise WarEraApiException("RequestException. Request failed, probably due to network error") from e
+        try:
+            r = self.session.send(request, expire_after=ttl)
+            time_elapsed = r.elapsed.total_seconds() * 1000
+            if time_elapsed > 70:
+                logger.warning("Request took more than expected (%s ms. > 70 ms)", round(time_elapsed, 1))
+            logger.debug("Request took %s ms.", time_elapsed)
+        except RequestException as e:
+            logger.error("RequestException. Request failed, probably due to network error", e)
+            raise WarEraApiException("RequestException. Request failed, probably due to network error") from e
 
-    try:
-        return _handle_response_codes(r, endpoint, data)
-    except WarEraTooMuchRequests as e:
-        if api_token == "":
-            logger.warning("Consider adding API_TOKEN with wareraapi.update_token(). You're limited to 100 requests/min\
-            right now")
-        time.sleep(e.retry_after)
-        return send_request(endpoint, data, ttl)
-
-
-def _codes_handler_helper(response: OriginalResponse, log_method: Callable, logger_message: str, exception_message: str, exception: type[WarEraApiException], *args, **kwargs) -> None:
-    """Helper function to handle request's response codes.
-    This one is for exceptions. It logs exception and prepares exception message"""
-    log_method(logger_message)
-
-    try:
-        msg = response.json().get('error', {}).get('message')
-    except requests.JSONDecodeError:
-        msg = None
-
-    if not msg:
-        msg = f"The server didn't provide a reason.\nResponse: {response.text}"
-
-    if exception == WarEraTooMuchRequests:
-        raise exception(f"{exception_message}. Reason: {msg}", kwargs["retry_after"])
-    else:
-        raise exception(f"{exception_message}. Reason: {msg}")
+        try:
+            return self._handle_response_codes(r, endpoint, data)
+        except WarEraTooMuchRequests as e:
+            if self.api_token is None:
+                logger.warning("Consider adding API_TOKEN with wareraapi.update_token(). You're limited to 100 requests/min "
+                               "right now")
+            time.sleep(e.retry_after)
+            return self.send_request(endpoint, data, ttl)
 
 
-def _handle_response_codes(response: OriginalResponse, endpoint, data) -> OriginalResponse | None:
-    """Function to handle request's response codes
+    def _codes_handler_helper(self, response: OriginalResponse, log_method: Callable, logger_message: str, exception_message: str, exception: type[WarEraApiException], *args, **kwargs) -> None:
+        """Helper function to handle request's response codes.
+        This one is for exceptions. It logs exception and prepares exception message"""
+        log_method(logger_message)
 
-    :return: Response if code is 2xx, calls helper function to raise custom Exception otherwise"""
-    match response.status_code:
-        case code if 200 <= code <= 299:
-            logger.debug("Successful request, returning response")
-            return response
-        case 503:
-            _codes_handler_helper(response,
-                                  logger.critical,
-                                  "Server returned 503: Service Unavailable. Server mad be down or overloaded, try again later",
-                                  "Server returned 503: Service Unavailable",
-                                  WarEraServiceUnavailable)
-        case 500:
-            _codes_handler_helper(response,
-                                  logger.error,
-                                  "Server returned 500: Internal Server Error | endpoint = {} | payload = {} | response = {}".format(endpoint, data, response.text),
-                                  "Server returned 500: Internal Server Error",
-                                  WarEraInternalServerError)
-        case 429:
-            limits_reset = int(response.headers.get('Ratelimit-Reset', 60)) + 1
-            _codes_handler_helper(response,
-                                  logger.warning,
-                                  "Server returned 429: Too much requests. Retrying in: {}".format(limits_reset),
-                                  "Server returned 429: Too much requests. Retrying in: {}".format(limits_reset),
-                                  WarEraTooMuchRequests,
-                                  retry_after=limits_reset)
-        case 404:
-            _codes_handler_helper(response,
-                                  logger.error,
-                                  "Server returned 404: Not Found | endpoint = {} | payload = {} \
-                                  | response = {} | possible causes: invalid input, non-existent resource, or wrong \
-                                  endpoint".format(endpoint, data, response.text),
-                                  "Server returned 404: Not Found",
-                                  WarEraNotFound)
-        case 403:
-            _codes_handler_helper(response,
-                                  logger.error,
-                                  "Server returned 403: Forbidden | endpoint = {} | payload = {}".format(endpoint, data),
-                                  "Server returned 403: Forbidden. You don't have access to requested data",
-                                  WarEraForbidden)
-        case 401:
-            data = response.json().get("error", {}).get("data", {})
-            if data.get("code") == "UNAUTHORIZED":
-                logger.error(f"Server returned 401: UNAUTHORIZED")
-                raise WarEraUnauthorized(f"{response.status_code}: UNAUTHORIZED, check if API_TOKEN is valid or \
-                                        set your API_TOKEN with wareraapi.update_api_token(<YOUR_TOKEN>)")
-            try:
-                msg = response.json().get('error').get('message')
-            except (ValueError, AttributeError):
-                msg = f"The server didn't provide a reason.\nRespond: {response.text}"
-            raise WarEraUnauthorized(f"{response.status_code}: {msg}")
-        case 400:
-            _codes_handler_helper(response,
-                                  logger.error,
-                                  "Server returned 400: Bad Request | endpoint = {} | payload = {} | respond = {}".format(endpoint, data, response.text),
-                                  "Server returned 400: Bad Request",
-                                  WarEraBadRequset)
-            logger.error("Server returned 400: Bad Request | endpoint = {} | payload = {} | respond = {}", endpoint, data, response.text)
-        case _:
-            logger.error(f"{response.status_code}: {response.reason}")
-            raise WarEraApiException(f"{response.status_code}: {response.reason}")
+        try:
+            msg = response.json().get('error', {}).get('message')
+        except requests.JSONDecodeError:
+            msg = None
+
+        if not msg:
+            msg = f"The server didn't provide a reason.\nResponse: {response.text}"
+
+        if exception == WarEraTooMuchRequests:
+            raise exception(f"{exception_message}. Reason: {msg}", kwargs["retry_after"])
+        else:
+            raise exception(f"{exception_message}. Reason: {msg}")
 
 
-def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int, api_token: str = API_TOKEN) -> None:
+    def _handle_response_codes(self, response: OriginalResponse, endpoint, data) -> OriginalResponse | None:
+        """Function to handle request's response codes
+
+        :return: Response if code is 2xx, calls helper function to raise custom Exception otherwise"""
+        match response.status_code:
+            case code if 200 <= code <= 299:
+                logger.debug("Successful request, returning response")
+                return response
+            case 503:
+                self._codes_handler_helper(response,
+                                      logger.critical,
+                                      "Server returned 503: Service Unavailable. Server mad be down or overloaded, try again later",
+                                      "Server returned 503: Service Unavailable",
+                                      WarEraServiceUnavailable)
+            case 500:
+                self._codes_handler_helper(response,
+                                      logger.error,
+                                      "Server returned 500: Internal Server Error | endpoint = {} | payload = {} | response = {}".format(endpoint, data, response.text),
+                                      "Server returned 500: Internal Server Error",
+                                      WarEraInternalServerError)
+            case 429:
+                limits_reset = int(response.headers.get('Ratelimit-Reset', 60)) + 1
+                self._codes_handler_helper(response,
+                                      logger.warning,
+                                      "Server returned 429: Too much requests. Retrying in: {} s".format(limits_reset),
+                                      "Server returned 429: Too much requests. Retrying in: {} s".format(limits_reset),
+                                      WarEraTooMuchRequests,
+                                      retry_after=limits_reset)
+            case 404:
+                self._codes_handler_helper(response,
+                                      logger.error,
+                                      "Server returned 404: Not Found | endpoint = {} | payload = {} \
+                                      | response = {} | possible causes: invalid input, non-existent resource, or wrong \
+                                      endpoint".format(endpoint, data, response.text),
+                                      "Server returned 404: Not Found",
+                                      WarEraNotFound)
+            case 403:
+                self._codes_handler_helper(response,
+                                      logger.error,
+                                      "Server returned 403: Forbidden | endpoint = {} | payload = {}".format(endpoint, data),
+                                      "Server returned 403: Forbidden. You don't have access to requested data",
+                                      WarEraForbidden)
+            case 401:
+                data = response.json().get("error", {}).get("data", {})
+                if data.get("code") == "UNAUTHORIZED":
+                    logger.error(f"Server returned 401: UNAUTHORIZED")
+                    raise WarEraUnauthorized(f"{response.status_code}: UNAUTHORIZED, check if API_TOKEN is valid or \
+                                            set your API_TOKEN with wareraapi.update_api_token(<YOUR_TOKEN>)")
+                try:
+                    msg = response.json().get('error').get('message')
+                except (ValueError, AttributeError):
+                    msg = f"The server didn't provide a reason.\nRespond: {response.text}"
+                raise WarEraUnauthorized(f"{response.status_code}: {msg}")
+            case 400:
+                self._codes_handler_helper(response,
+                                      logger.error,
+                                      "Server returned 400: Bad Request | endpoint = {} | payload = {} | respond = {}".format(endpoint, data, response.text),
+                                      "Server returned 400: Bad Request",
+                                      WarEraBadRequset)
+                logger.error("Server returned 400: Bad Request | endpoint = {} | payload = {} | respond = {}", endpoint, data, response.text)
+            case _:
+                logger.error(f"{response.status_code}: {response.reason}")
+                raise WarEraApiException(f"{response.status_code}: {response.reason}")
+
+class EndpointCall:
+    def __init__(self, endpoint_path: str, cache_tll: int = DEFAULT_CACHE_TTL, response_type: ResponseType = ResponseType.REGULAR, payload: dict = None, ):
+        self.endpoint_path: str = endpoint_path
+        self.payload: dict = payload
+        self.cache_ttl: int = cache_tll
+        self.response_type: ResponseType = response_type
+
+    def execute(self, session: WarEraApiSession) -> dict | tuple[dict, (str | None)]:
+        """Executes request and returns data (or items)"""
+        response = session.send_request(endpoint=self.endpoint_path, data=self.payload, ttl=self.cache_ttl)
+        try:
+            data = response.json().get("result", {}).get("data")
+        except AttributeError as e:
+            logger.error("API responded with weird data | response = {}".format(self.endpoint_path, self.payload, response.text))
+            raise WarEraApiException("API responded with weird data | endpoint = {} | data = {} | response = {}".format(self.endpoint_path, self.payload, response.text)) from e
+        if self.response_type == ResponseType.REGULAR:
+            return data
+        elif self.response_type == ResponseType.PAGINATED_LIST:
+            return data.get("items"), data.get("nextCursor")
+
+
+class BatchSession:
+    def __init__(self, session: WarEraApiSession, cache_ttl=DEFAULT_CACHE_TTL):
+        self.cache_ttl = cache_ttl
+        self.responses = None
+        self.batched_endpoints = []
+        self.batched_payload = []
+        self.session = session
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is None:
+            self.responses = self.send_batch(self.cache_ttl)
+
+    def add(self, batched_endpoint: EndpointCall) -> None:
+        """This method adds instance of EndpointCall to batch, to be worked on later"""
+        # These two lists should always be synchronized
+        self.batched_endpoints.append((batched_endpoint.endpoint_path, batched_endpoint.cache_ttl))
+        self.batched_payload.append(batched_endpoint.payload)
+
+    def _prepare_batch(self, ttl: int = DEFAULT_CACHE_TTL) -> list[dict]:
+        """This method splits batches into pieces, makes them understandable by game server and sends requests
+
+        :return: list of responses from the server"""
+        logger.debug("Preparing BATCH request")
+        batch_limit = BATCH_LIMIT or 9999
+        cycle, max_cycle = 0, math.ceil(len(self.batched_endpoints) / batch_limit)  # How much batches to prepare
+        data = []
+        while cycle < max_cycle:
+            cycle += 1
+            # /endpoints,endpoint,endpoint?batch=1?input=<payload>
+            endpoints_str = "/" + ",".join(
+                ep[1:] for ep, _ in self.batched_endpoints[(cycle - 1) * batch_limit:cycle * batch_limit])
+            # Input of endpoints
+            input_payload = {str(i): p for i, p in
+                             enumerate(self.batched_payload[(cycle - 1) * batch_limit:cycle * batch_limit])}
+            responses: list[dict] = self.session.send_request(f"{endpoints_str}?batch=1", data=input_payload, ttl=ttl).json()
+            data.extend(responses)
+            time.sleep(BATCH_DELAY)
+        return data
+
+    def _cache_endpoints(self, responses: list[dict]) -> None:
+        """This method caches every batched endpoint"""
+        global _already_cached
+
+        # Here we cache every response from a batch in case something will be requested independently
+        logger.debug(f"Starting to cache batched endpoints independently")
+        _already_cached = 0
+        for index, response in enumerate(responses):
+            save_cache_manually(self.batched_endpoints[index][0], self.batched_payload[index], response,
+                                self.batched_endpoints[index][1], api_session=self.session)
+        logger.info("Finished endpoints caching. Endpoints: %s, were already cached: %s",
+                    len(self.batched_endpoints), _already_cached)
+
+    def send_batch(self, ttl: int = DEFAULT_CACHE_TTL) -> list[dict]:
+        """This method splits and sends batched requests, as well as returns and caches batched responses"""
+        responses = self._prepare_batch(ttl)
+        self._cache_endpoints(responses)
+        self.batched_endpoints.clear()
+        self.batched_payload.clear()
+        return responses
+
+
+def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int, api_session: WarEraApiSession) -> None:
     """Creates fake request and saves it to local cache"""
     global _already_cached
 
@@ -309,16 +308,16 @@ def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int, api_t
         method="GET",
         url=f"https://api2.warera.io/trpc{endpoint}",
         headers={
-            "X-API-Key": api_token,
+            "X-API-Key": api_session.api_token,
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
             "Accept": "application/json"
         },
         params={"input": json.dumps(params)} if params else None).prepare()
 
     # If already cached and not expired then do nothing
-    cache_key = s.cache.create_key(fake_req)
+    cache_key = api_session.session.cache.create_key(fake_req)
     try:
-        if not s.cache.get_response(cache_key).is_expired:
+        if not api_session.session.cache.get_response(cache_key).is_expired:
             _already_cached += 1
             return None
     except AttributeError:
@@ -339,7 +338,7 @@ def save_cache_manually(endpoint: str, params: dict, data: dict, ttl: int, api_t
 
     expire_date = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=ttl)
 
-    s.cache.save_response(response=fake_resp, cache_key=cache_key, expires=expire_date)
+    api_session.session.cache.save_response(response=fake_resp, cache_key=cache_key, expires=expire_date)
 
 
 def _clean(dictionary: dict) -> dict:  # This method was made with ChatGPT :( Shame on me
@@ -741,5 +740,18 @@ def worker_get_total_workers_count(user_id: str) -> EndpointCall:
     return EndpointCall(endpoint_path="/worker.getTotalWorkersCount", payload=payload)
 
 
-if __name__ == "__main__":
-    print("From wareraapi.py: Hi =)")
+def party_get_by_id(party_id: str) -> EndpointCall:
+    payload = _clean({
+        "partyId": party_id
+    })
+    return EndpointCall(endpoint_path="/party.getById", payload=payload)
+
+
+def party_get_many_paginated(country_id: str = "", limit: int = 10, cursor = None) -> EndpointCall:
+    limit = min(max(1, limit), 100)
+    payload = _clean({
+        "limit": limit,
+        "countryId": country_id,
+        "cursor": cursor
+    })
+    return EndpointCall(endpoint_path="/party.getManyPaginated", payload=payload, response_type=ResponseType.PAGINATED_LIST)

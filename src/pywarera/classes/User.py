@@ -6,6 +6,7 @@ from typing import Literal
 
 class User:
     def __init__(self, data):
+        self.raw = data
         self.dates = UserDates(data["dates"])
         self.is_banned: bool = data.get("infos", {}).get("isBanned", False)
         self.leveling = UserLeveling(data["leveling"])

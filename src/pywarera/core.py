@@ -12,8 +12,9 @@ from .classes.GameConfig import GameConfig
 from .classes.Item import Item
 from .classes.WorkersPerCompany import WorkersPerCompany
 from .classes.RecommendedRegion import RecommendedRegion
-from .wareraapi import BatchSession
-from typing import Literal
+from .classes.Party import Party
+from .wareraapi import BatchSession, WarEraApiSession
+
 
 countries_id_to_names = dict()
 countries = dict()
@@ -21,222 +22,175 @@ countries = dict()
 logger = logging.getLogger(__name__)
 
 
-def clear_cache():
-    wareraapi.s.cache.clear()
-
-
-def update_api_token(new_api_token: str):
-    wareraapi.update_api_token(new_api_token)
-    logger.warning("API token were updated")
-
-
-def get_company_recommended_regions(company_id: str, include_deposit: bool = True) -> list[RecommendedRegion]:
-    results = wareraapi.company_get_recommended_region_ids(company_id=company_id, include_deposit=include_deposit).execute()
-    return [RecommendedRegion(data) for data in results]
-
-def get_workers_per_company(company_id: str) -> WorkersPerCompany:
-    return WorkersPerCompany(wareraapi.worker_get_workers(company_id=company_id).execute())
-
-
-def get_user_workers_per_company(user_id: str) -> WorkersPerCompany:
-    return WorkersPerCompany(wareraapi.worker_get_workers(user_id=user_id).execute())
-
-
-def get_items():
-    return GameConfig(wareraapi.game_config_get_game_config().execute()).items
-
-
-def get_item(item_code: str) -> Item:
-    return get_items().get_item_by_code(item_code)
-
-
-def get_user_wage(user_id, cursor=None):
-    logger.debug("User wage were requested, searching for wage transaction")
-    wage = 0
-    wage_transactions = wareraapi.transaction_get_paginated_transactions(limit=20, user_id=user_id, transaction_type="wage", cursor=cursor).execute()
-    if len(wage_transactions[0]) > 0:
-        for transaction in wage_transactions[0]:
-            if transaction["sellerId"] == user_id:
-                wage = transaction["money"] / transaction["quantity"]
-        if wage == 0:
-            wage = get_user_wage(user_id, wage_transactions[1])
-    return wage
-
-
-def get_trading_prices() -> ItemPrices:
-    return ItemPrices(wareraapi.item_trading_get_prices().execute())
-
-
-def get_item_price(item_code: str) -> float:
-    return get_trading_prices().get_price_by_code(item_code)
-
-
-def get_region(region_id: str) -> Region:
-    return Region(wareraapi.region_get_regions_object().execute()[region_id])
-
-
-def get_user(user_id: str) -> User:
-    return User(wareraapi.user_get_user_lite(user_id).execute())
-
-
-def get_users(users_ids: list[str]) -> list[User]:
-    with BatchSession() as batch:
-        for user_id in users_ids:
-            batch.add(wareraapi.user_get_user_lite(user_id))
-    return [User(user_data["result"]["data"]) for user_data in batch.responses]
-
-
-def get_government(country_id: str) -> Government:
-    return Government(wareraapi.government_get_by_country_id(country_id).execute())
-
-
-def get_country(country_id: str) -> Country:
-    global countries
-    if not countries:
-        get_all_countries()
-    return countries[country_id]
-
-
-def get_all_countries(return_list: bool = False) -> list[Country] | dict[str, Country]:
-    global countries
-    countries = {i["_id"]: Country(i) for i in wareraapi.country_get_all_countries().execute()}
-    if return_list:
-        return [Country(i) for i in wareraapi.country_get_all_countries().execute()]
-    return countries
-
-
-def get_country_id_by_name(country_name: str) -> str:
-    global countries_id_to_names
-    if countries_id_to_names:
-        for key, value in countries_id_to_names.items():
-            if value[0] == country_name:
-                return key
-    else:
-        countries_id_to_names = {i.id: (i.name, i.code) for i in get_all_countries(return_list=True)}
-        return get_country_id_by_name(country_name)
-
-
-def get_country_citizens_ids(country_id: str) -> list[str]:
-    to_return = []
-    cursor = ""
-    while cursor is not None:
-        items, cursor = wareraapi.user_get_users_by_country(country_id, limit=100, cursor=cursor).execute()
-        to_return.extend([item["_id"] for item in items])
-    return to_return
-
-
-def get_country_citizens(country_id: str) -> list[User]:
-    ids = get_country_citizens_ids(country_id)
-    return get_users(ids)
-
-
-def get_country_citizen_ids_by_name(country_name: str) -> list[str]:
-    return get_country_citizens_ids(get_country_id_by_name(country_name))
-
-
-def get_country_citizens_by_name(country_name: str) -> list[User]:
-    ids = get_country_citizen_ids_by_name(country_name)
-    return get_users(ids)
-
-
-def get_user_company_ids(user_id: str) -> list[str]:
-    return wareraapi.company_get_companies(user_id, per_page=15).execute()[0]  # 15 just to be sure that exceeding companies will be inclided
-
-
-def get_users_company_ids(user_ids: list[str]) -> list[str]:
-    to_return = []
-    with BatchSession() as batch:
-        for user_id in user_ids:
-            batch.add(wareraapi.company_get_companies(user_id, per_page=15)) # 15 just to be sure that exceeding companies will be inclided
-    for response in batch.responses:
-        try:
-            to_return.extend(response["result"]["data"]["items"])
-        except KeyError as e:
-            logger.warning("Got KeyError when working with get_companies_ids_of_players. Broken request?")
-            logger.warning(f"{e}")
-            pass
-    return to_return
-
-
-def get_country_citizens_company_ids(country_id: str) -> list[str]:
-    return get_users_company_ids(get_country_citizens_ids(country_id))
-
-
-def get_company(company_id: str) -> Company:
-    return Company(wareraapi.company_get_by_id(company_id))
-
-
-def get_companies(company_ids: list[str]) -> list[Company]:
-    with BatchSession() as batch:
-        for company_id in company_ids:
-            batch.add(wareraapi.company_get_by_id(company_id))
-    return [Company(response["result"]["data"]) for response in batch.responses]
-
-
-def get_country_citizens_companies(country_id: str) -> list[Company]:
-    company_ids = get_country_citizens_company_ids(country_id)
-    return get_companies(company_ids)
-
-
-def get_user_companies(user_id: str) -> list[Company]:
-    company_ids = get_user_company_ids(user_id)
-    return get_companies(company_ids)
-
-
-def get_all_company_ids() -> list[str]:
-    #results = []
-    #users = []
-    #countriess = list(get_all_countries().keys())
-    #for i in countriess:
-    #    users.extend(get_country_citizens_ids(i))
-    #with BatchSession() as batch:
-    #    for i in users:
-    #        batch.add(wareraapi.company_get_companies(i, per_page=15))
-    #for i in batch.responses:
-    #    results.extend(i["result"]["data"]["items"])
-
-    results = []
-    cursor = ""
-    while cursor is not None:
-        result, next_cursor = wareraapi.company_get_companies(per_page=100, cursor=cursor).execute()
-        cursor = next_cursor
-        results.extend(result)
-    return results
-
-
-def get_military_unit(mu_id: str) -> MilitaryUnit:
-    return MilitaryUnit(wareraapi.mu_get_by_id(mu_id))
-
-
-def get_military_units_from_paginated(items: list) -> tuple[MilitaryUnit]:
-    to_return = []
-    for mu_data in items:
-        to_return.append(MilitaryUnit(mu_data))
-    return tuple(to_return)
-
-
-def get_users_in_battle_id(battle_id: str, subject: Literal["user", "mu", "country"] = "user") -> tuple[set, set]:
-    items_attackers = wareraapi.battle_ranking_get_ranking(type=subject, data_type="damage", battle_id=battle_id, side="attacker").execute()
-    items_defenders = wareraapi.battle_ranking_get_ranking(type=subject, data_type="damage", battle_id=battle_id, side="defender").execute()
-    items_attackers = set([i[subject] for i in [k for k in items_attackers]] if type(items_attackers) == list else [i[subject] for i in items_attackers])
-    items_defenders = set([i[subject] for i in [k for k in items_defenders]] if type(items_defenders) == list else [i[subject] for i in items_defenders])
-    return items_attackers, items_defenders
-
-
-def get_damage_in_battles(battle_id: str | list, side: Literal["attacker", "defender"]):
-    if isinstance(battle_id, str):
-        data = wareraapi.battle_ranking_get_ranking(type="user", data_type="damage", battle_id=battle_id, side=side).execute()
-    else:
-        data = []
-        for i in battle_id:
-            data.append(wareraapi.battle_ranking_get_ranking(type="user", data_type="damage", battle_id=i, side=side).execute())
-    to_return = {}
-    for i in data:
-        if isinstance(data[0], list):  # if 2 or more rounds
-            for j in i:
-                to_return.setdefault(j["user"], 0)
-                to_return[j["user"]] += j["value"]
+class WarEraSession:
+    def __init__(self, api_token: str):
+        self.api_session: WarEraApiSession = WarEraApiSession(api_token=api_token)
+
+    def clear_cache(self) -> None:
+        self.api_session.session.cache.clear()
+
+    def get_company_recommended_regions(self, company_id: str, include_deposit: bool = True) -> list[RecommendedRegion]:
+        results = wareraapi.company_get_recommended_region_ids(company_id=company_id, include_deposit=include_deposit).execute(self.api_session)
+        return [RecommendedRegion(data) for data in results]
+
+    def get_workers_per_company(self, company_id: str) -> WorkersPerCompany:
+        return WorkersPerCompany(wareraapi.worker_get_workers(company_id=company_id).execute(self.api_session))
+
+    def get_user_workers_per_company(self, user_id: str) -> WorkersPerCompany:
+        return WorkersPerCompany(wareraapi.worker_get_workers(user_id=user_id).execute(self.api_session))
+
+    def get_items(self):
+        return GameConfig(wareraapi.game_config_get_game_config().execute(self.api_session)).items
+
+    def get_item(self, item_code: str) -> Item:
+        return self.get_items().get_item_by_code(item_code)
+
+    def get_user_wage(self, user_id, cursor=None):
+        logger.debug("User wage were requested, searching for wage transaction")
+        wage = 0
+        wage_transactions = wareraapi.transaction_get_paginated_transactions(limit=20, user_id=user_id, transaction_type="wage", cursor=cursor).execute(self.api_session)
+        if len(wage_transactions[0]) > 0:
+            for transaction in wage_transactions[0]:
+                if transaction["sellerId"] == user_id:
+                    wage = transaction["money"] / transaction["quantity"]
+            if wage == 0:
+                wage = self.get_user_wage(user_id, wage_transactions[1])
+        return wage
+
+    def get_trading_prices(self) -> ItemPrices:
+        return ItemPrices(wareraapi.item_trading_get_prices().execute(self.api_session))
+
+    def get_item_price(self, item_code: str) -> float:
+        return self.get_trading_prices().get_price_by_code(item_code)
+
+    def get_region(self, region_id: str) -> Region:
+        return Region(wareraapi.region_get_regions_object().execute(self.api_session)[region_id])
+
+    def get_user(self, user_id: str) -> User:
+        return User(wareraapi.user_get_user_lite(user_id).execute(self.api_session))
+
+    def get_users(self, users_ids: list[str]) -> list[User]:
+        with BatchSession(self.api_session) as batch:
+            for user_id in users_ids:
+                batch.add(wareraapi.user_get_user_lite(user_id))
+        return [User(user_data["result"]["data"]) for user_data in batch.responses]
+
+    def get_government(self, country_id: str) -> Government:
+        return Government(wareraapi.government_get_by_country_id(country_id).execute(self.api_session))
+
+    def get_country(self, country_id: str) -> Country:
+        global countries
+        if not countries:
+            self.get_all_countries()
+        return countries[country_id]
+
+    def get_all_countries(self, return_list: bool = False) -> list[Country] | dict[str, Country]:
+        global countries
+        countries = {i["_id"]: Country(i) for i in wareraapi.country_get_all_countries().execute(self.api_session)}
+        if return_list:
+            return [Country(i) for i in wareraapi.country_get_all_countries().execute(self.api_session)]
+        return countries
+
+    def get_country_id_by_name(self, country_name: str) -> str:
+        global countries_id_to_names
+        if countries_id_to_names:
+            for key, value in countries_id_to_names.items():
+                if value[0] == country_name:
+                    return key
         else:
-            to_return.setdefault(i["user"], 0)
-            to_return[i["user"]] += i["value"]
-    return to_return
+            countries_id_to_names = {i.id: (i.name, i.code) for i in self.get_all_countries(return_list=True)}
+            return self.get_country_id_by_name(country_name)
+
+    def get_country_citizens_ids(self, country_id: str) -> list[str]:
+        to_return = []
+        cursor = ""
+        while cursor is not None:
+            items, cursor = wareraapi.user_get_users_by_country(country_id, limit=100, cursor=cursor).execute(self.api_session)
+            to_return.extend([item["_id"] for item in items])
+        return to_return
+
+    def get_country_citizens(self, country_id: str) -> list[User]:
+        ids = self.get_country_citizens_ids(country_id)
+        return self.get_users(ids)
+
+    def get_country_citizen_ids_by_name(self, country_name: str) -> list[str]:
+        return self.get_country_citizens_ids(self.get_country_id_by_name(country_name))
+
+    def get_country_citizens_by_name(self, country_name: str) -> list[User]:
+        ids = self.get_country_citizen_ids_by_name(country_name)
+        return self.get_users(ids)
+
+    def get_user_company_ids(self, user_id: str) -> list[str]:
+        return wareraapi.company_get_companies(user_id, per_page=15).execute(self.api_session)[0]  # 15 just to be sure that exceeding companies will be inclided
+
+    def get_users_company_ids(self, user_ids: list[str]) -> list[str]:
+        to_return = []
+        with BatchSession(self.api_session) as batch:
+            for user_id in user_ids:
+                batch.add(wareraapi.company_get_companies(user_id, per_page=15)) # 15 just to be sure that exceeding companies will be inclided
+        for response in batch.responses:
+            try:
+                to_return.extend(response["result"]["data"]["items"])
+            except KeyError as e:
+                logger.warning("Got KeyError when working with get_companies_ids_of_players. Broken request?")
+                logger.warning(f"{e}")
+                pass
+        return to_return
+
+    def get_country_citizens_company_ids(self, country_id: str) -> list[str]:
+        return self.get_users_company_ids(self.get_country_citizens_ids(country_id))
+
+    def get_company(self, company_id: str) -> Company:
+        return Company(wareraapi.company_get_by_id(company_id))
+
+    def get_companies(self, company_ids: list[str]) -> list[Company]:
+        with BatchSession(self.api_session) as batch:
+            for company_id in company_ids:
+                batch.add(wareraapi.company_get_by_id(company_id))
+        return [Company(response["result"]["data"]) for response in batch.responses]
+
+    def get_country_citizens_companies(self, country_id: str) -> list[Company]:
+        company_ids = self.get_country_citizens_company_ids(country_id)
+        return self.get_companies(company_ids)
+
+    def get_user_companies(self, user_id: str) -> list[Company]:
+        company_ids = self.get_user_company_ids(user_id)
+        return self.get_companies(company_ids)
+
+    def get_all_company_ids(self) -> list[str]:
+        #results = []
+        #users = []
+        #countriess = list(get_all_countries().keys())
+        #for i in countriess:
+        #    users.extend(get_country_citizens_ids(i))
+        #with BatchSession() as batch:
+        #    for i in users:
+        #        batch.add(wareraapi.company_get_companies(i, per_page=15))
+        #for i in batch.responses:
+        #    results.extend(i["result"]["data"]["items"])
+
+        results = []
+        cursor = ""
+        while cursor is not None:
+            result, next_cursor = wareraapi.company_get_companies(per_page=100, cursor=cursor).execute(self.api_session)
+            cursor = next_cursor
+            results.extend(result)
+        return results
+
+    def get_military_unit(self, mu_id: str) -> MilitaryUnit:
+        return MilitaryUnit(wareraapi.mu_get_by_id(mu_id).execute(self.api_session))
+
+    def get_military_units_from_paginated(self, items: list) -> tuple[MilitaryUnit]:
+        to_return = []
+        for mu_data in items:
+            to_return.append(MilitaryUnit(mu_data))
+        return tuple(to_return)
+
+    def get_party(self, party_id: str) -> Party:
+        return Party(wareraapi.party_get_by_id(party_id).execute(self.api_session))
+
+    def get_parties(self, party_ids: list[str]) -> list[Party]:
+        with BatchSession(self.api_session) as batch:
+            for party_id in party_ids:
+                batch.add(wareraapi.party_get_by_id(party_id))
+        return [Party(response["result"]["data"]) for response in batch.responses]

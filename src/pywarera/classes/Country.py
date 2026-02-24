@@ -25,6 +25,7 @@ class Country:
         self.discord_url: str | None = data.get("discordUrl")
         self.specialized_item: str | None = data.get("specializedItem")
         self.enemy: str | None = data.get("enemy")
+        self.ruling_party: str = data.get("rulingParty")
 
     @property
     def production_bonus(self):
