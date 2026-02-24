@@ -227,7 +227,7 @@ class EndpointCall:
         try:
             data = response.json().get("result", {}).get("data")
         except AttributeError as e:
-            logger.error("API responded with weird data | response = {}".format(self.endpoint_path, self.payload, response.text))
+            logger.error("API responded with weird data | response = {}".format(response.text))
             raise WarEraApiException("API responded with weird data | endpoint = {} | data = {} | response = {}".format(self.endpoint_path, self.payload, response.text)) from e
         if self.response_type == ResponseType.REGULAR:
             return data
