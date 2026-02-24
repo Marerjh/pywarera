@@ -1,9 +1,9 @@
 class Party:
     def __init__(self, data: dict):
-        self.militarism: int = data.get("ethics").get("militarism")
-        self.isolationism: int = data.get("ethics").get("isolationism")
-        self.imperialism: int = data.get("ethics").get("imperialism")
-        self.industrialism: int = data.get("ethics").get("industrialism")
+        self.militarism: int = data.get("ethics", {}).get("militarism")
+        self.isolationism: int = data.get("ethics", {}).get("isolationism")
+        self.imperialism: int = data.get("ethics", {}).get("imperialism")
+        self.industrialism: int = data.get("ethics", {}).get("industrialism")
         self.id: str = data.get("_id")
         self.name: str = data.get("name")
         self.description: str = data.get("description")

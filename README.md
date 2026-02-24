@@ -40,6 +40,8 @@ License: GNU General Public License v3.0
 - 🟡mu
 - 🔴transaction
 - 🔴upgrade
+- 🟡workers
+- 🟡party
 
 
 ## How to install
@@ -52,14 +54,14 @@ pip install pywarera
 ```python
 import pywarera
 
-pywarera.update_api_token("<YOUR_API_TOKEN>")
+s = pywarera.WarEraSession(api_token="xxx")
 
 # Returns country id
-country_id = pywarera.get_country_id_by_name("Ukraine")
+country_id = s.get_country_id_by_name("Ukraine")
 print(country_id)
 
 # I want to know if Ukraine has a president
-government = pywarera.get_government(country_id)
+government = s.get_government(country_id)
 
 is_there_a_president = government.has_president()
 
@@ -70,7 +72,7 @@ if is_there_a_president:
 # Let's check the wealth of a random citizen
 import random
 
-romania_citizens = pywarera.get_country_citizens_by_name("Romania")
+romania_citizens = s.get_country_citizens_by_name("Romania")
 random_citizen = random.choice(romania_citizens)
 print(random_citizen.wealth)
 ```
@@ -79,15 +81,15 @@ print(random_citizen.wealth)
 ```python
 from pywarera import wareraapi
 
-wareraapi.update_api_token("<YOUR_API_TOKEN>")
+api_s = wareraapi.WarEraApiSession(api_token="xxx")
 
 # Regular request, will be cached
-user_response = wareraapi.user_get_user_lite(user_id="123456").execute()
+user_response = wareraapi.user_get_user_lite(user_id="123456").execute(api_s)
 
 # Batched request, will be cached
 from pywarera.wareraapi import BatchSession
 
-with BatchSession() as batch:
+with BatchSession(api_s) as batch:
     batch.add(wareraapi.user_get_user_lite(user_id="123456"))
     batch.add(wareraapi.user_get_user_lite(user_id="7891011"))
 
@@ -135,3 +137,7 @@ print(batch.responses)
 ### MUs
 - get_military_unit(mu_id) -> returns instance of MilitaryUnit class
 - get_military_units_from_paginated(items: list) -> to work with mu.getManyPaginated request
+
+### Parties
+- get_party(party_id)
+- get_parties(party_ids)

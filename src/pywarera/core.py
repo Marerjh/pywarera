@@ -86,10 +86,9 @@ class WarEraSession:
 
     def get_all_countries(self, return_list: bool = False) -> list[Country] | dict[str, Country]:
         global countries
-        countries = {i["_id"]: Country(i) for i in wareraapi.country_get_all_countries().execute(self.api_session)}
         if return_list:
             return [Country(i) for i in wareraapi.country_get_all_countries().execute(self.api_session)]
-        return countries
+        return {i["_id"]: Country(i) for i in wareraapi.country_get_all_countries().execute(self.api_session)}
 
     def get_country_id_by_name(self, country_name: str) -> str:
         global countries_id_to_names
@@ -141,7 +140,7 @@ class WarEraSession:
         return self.get_users_company_ids(self.get_country_citizens_ids(country_id))
 
     def get_company(self, company_id: str) -> Company:
-        return Company(wareraapi.company_get_by_id(company_id))
+        return Company(wareraapi.company_get_by_id(company_id).execute(self.api_session))
 
     def get_companies(self, company_ids: list[str]) -> list[Company]:
         with BatchSession(self.api_session) as batch:
@@ -156,26 +155,6 @@ class WarEraSession:
     def get_user_companies(self, user_id: str) -> list[Company]:
         company_ids = self.get_user_company_ids(user_id)
         return self.get_companies(company_ids)
-
-    def get_all_company_ids(self) -> list[str]:
-        #results = []
-        #users = []
-        #countriess = list(get_all_countries().keys())
-        #for i in countriess:
-        #    users.extend(get_country_citizens_ids(i))
-        #with BatchSession() as batch:
-        #    for i in users:
-        #        batch.add(wareraapi.company_get_companies(i, per_page=15))
-        #for i in batch.responses:
-        #    results.extend(i["result"]["data"]["items"])
-
-        results = []
-        cursor = ""
-        while cursor is not None:
-            result, next_cursor = wareraapi.company_get_companies(per_page=100, cursor=cursor).execute(self.api_session)
-            cursor = next_cursor
-            results.extend(result)
-        return results
 
     def get_military_unit(self, mu_id: str) -> MilitaryUnit:
         return MilitaryUnit(wareraapi.mu_get_by_id(mu_id).execute(self.api_session))

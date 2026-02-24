@@ -52,7 +52,7 @@ class WarEraInternalServerError(WarEraApiException):
     pass
 
 
-class WarEraBadRequset(WarEraApiException):
+class WarEraBadRequest(WarEraApiException):
     """400"""
     pass
 
@@ -208,7 +208,7 @@ class WarEraApiSession:
                                       logger.error,
                                       "Server returned 400: Bad Request | endpoint = {} | payload = {} | respond = {}".format(endpoint, data, response.text),
                                       "Server returned 400: Bad Request",
-                                      WarEraBadRequset)
+                                      WarEraBadRequest)
                 logger.error("Server returned 400: Bad Request | endpoint = {} | payload = {} | respond = {}", endpoint, data, response.text)
             case _:
                 logger.error(f"{response.status_code}: {response.reason}")
