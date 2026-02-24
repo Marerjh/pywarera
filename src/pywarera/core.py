@@ -86,9 +86,12 @@ class WarEraSession:
 
     def get_all_countries(self, return_list: bool = False) -> list[Country] | dict[str, Country]:
         global countries
+        response = wareraapi.country_get_all_countries().execute(self.api_session)
+        countries = {i["_id"]: Country(i) for i in response}
         if return_list:
-            return [Country(i) for i in wareraapi.country_get_all_countries().execute(self.api_session)]
-        return {i["_id"]: Country(i) for i in wareraapi.country_get_all_countries().execute(self.api_session)}
+            return [Country(i) for i in response]
+        return countries
+
 
     def get_country_id_by_name(self, country_name: str) -> str:
         global countries_id_to_names
